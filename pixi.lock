@@ -253,7 +253,7 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/c8/be/8fed28dd0a180dca19e72c233cbf58efa36df055e5b9d90d64fd1740b828/pydantic_core-2.41.5-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/5e/a4/dc0368e2c38923fac17c954d581da1335d4ee4c29c4492059c94e9555f71/pyemd-1.1.0-cp311-cp311-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/78/20/e70bb515584fafe1114be442b47554df6a22c57b7bd2641a6dcfabe9004b/pygsp-0.6.1-py3-none-any.whl
-      - pypi: https://files.pythonhosted.org/packages/cf/1c/6122684e93864c09cf8010e27ad82b3b2f4864bd6864a40cb9e040752277/pytorch_lightning-2.3.3-py3-none-any.whl
+      - pypi: https://files.pythonhosted.org/packages/e9/70/9c2587d7a566c1e656b5fcdbc1d01afd34675d8418b8fc4da3eb4d9bc808/pytorch_lightning-2.0.4-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/10/99/781fe0c827be2742bcc775efefccb3b048a3a9c6ce9aec0cbf4a101677e5/pytz-2026.1.post1-py2.py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/33/65/c6b43cd906f164f4266612659e14d6fdbd0f4cfb09452979164f8977944c/rdkit-2023.3.2-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/9a/66/20465097782d7e1e742d846407ea7262d338c6e876ddddad38ca8907b38f/sentry_sdk-2.55.0-py2.py3-none-any.whl
@@ -432,7 +432,7 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/12/44/37e403fd9455708b3b942949e1d7febc02167662bf1a7da5b78ee1ea2842/pydantic_core-2.41.5-cp311-cp311-macosx_11_0_arm64.whl
       - pypi: https://files.pythonhosted.org/packages/98/08/e3dbec687e0e0a7db4c994cbba0d9015ce77215e7db5def84438b594ee86/pyemd-1.1.0-cp311-cp311-macosx_11_0_arm64.whl
       - pypi: https://files.pythonhosted.org/packages/78/20/e70bb515584fafe1114be442b47554df6a22c57b7bd2641a6dcfabe9004b/pygsp-0.6.1-py3-none-any.whl
-      - pypi: https://files.pythonhosted.org/packages/cf/1c/6122684e93864c09cf8010e27ad82b3b2f4864bd6864a40cb9e040752277/pytorch_lightning-2.3.3-py3-none-any.whl
+      - pypi: https://files.pythonhosted.org/packages/e9/70/9c2587d7a566c1e656b5fcdbc1d01afd34675d8418b8fc4da3eb4d9bc808/pytorch_lightning-2.0.4-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/10/99/781fe0c827be2742bcc775efefccb3b048a3a9c6ce9aec0cbf4a101677e5/pytz-2026.1.post1-py2.py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/2c/15/05b4ead94efe30219eb94f16c645a5974939a7212a5731e0c3f0d0299cc6/rdkit-2023.3.2-cp311-cp311-macosx_11_0_arm64.whl
       - pypi: https://files.pythonhosted.org/packages/9a/66/20465097782d7e1e742d846407ea7262d338c6e876ddddad38ca8907b38f/sentry_sdk-2.55.0-py2.py3-none-any.whl
@@ -4514,90 +4514,87 @@ packages:
   purls: []
   size: 7189
   timestamp: 1724179791784
-- pypi: https://files.pythonhosted.org/packages/cf/1c/6122684e93864c09cf8010e27ad82b3b2f4864bd6864a40cb9e040752277/pytorch_lightning-2.3.3-py3-none-any.whl
+- pypi: https://files.pythonhosted.org/packages/e9/70/9c2587d7a566c1e656b5fcdbc1d01afd34675d8418b8fc4da3eb4d9bc808/pytorch_lightning-2.0.4-py3-none-any.whl
   name: pytorch-lightning
-  version: 2.3.3
-  sha256: 4365e3f2874e223e63cb42628d24c88c2bdc8d1794453cac38c0619b31115fba
+  version: 2.0.4
+  sha256: 6b1b04c818250ebfe5cde576b3e559f4d00c84c2f80598ef40224b2a749a5398
   requires_dist:
   - numpy>=1.17.2
-  - torch>=2.0.0
+  - torch>=1.11.0
   - tqdm>=4.57.0
   - pyyaml>=5.4
-  - fsspec[http]>=2022.5.0
+  - fsspec[http]>2021.6.0
   - torchmetrics>=0.7.0
-  - packaging>=20.0
-  - typing-extensions>=4.4.0
-  - lightning-utilities>=0.10.0
+  - packaging>=17.1
+  - typing-extensions>=4.0.0
+  - lightning-utilities>=0.7.0
   - matplotlib>3.1 ; extra == 'all'
-  - omegaconf>=2.2.3 ; extra == 'all'
-  - hydra-core>=1.2.0 ; extra == 'all'
-  - jsonargparse[signatures]>=4.27.7 ; extra == 'all'
+  - omegaconf>=2.0.5 ; extra == 'all'
+  - hydra-core>=1.0.5 ; extra == 'all'
+  - jsonargparse[signatures]>=4.18.0 ; extra == 'all'
   - rich>=12.3.0 ; extra == 'all'
   - tensorboardx>=2.2 ; extra == 'all'
-  - bitsandbytes>=0.42.0 ; extra == 'all'
-  - requests<2.32.0 ; extra == 'all'
-  - torchvision>=0.15.0 ; extra == 'all'
-  - ipython[all]<8.15.0 ; extra == 'all'
+  - torchvision>=0.12.0 ; extra == 'all'
+  - gym[classic-control]>=0.17.0 ; extra == 'all'
+  - ipython[all]<8.14.1 ; extra == 'all'
   - torchmetrics>=0.10.0 ; extra == 'all'
-  - lightning-utilities>=0.8.0 ; extra == 'all'
-  - deepspeed>=0.8.2,<=0.9.3 ; sys_platform != 'darwin' and sys_platform != 'win32' and extra == 'all'
-  - deepspeed>=0.8.2,<=0.9.3 ; sys_platform != 'darwin' and sys_platform != 'win32' and extra == 'deepspeed'
+  - lightning-utilities>=0.7.0 ; extra == 'all'
+  - deepspeed>=0.8.2 ; sys_platform != 'win32' and extra == 'all'
+  - deepspeed>=0.8.2 ; sys_platform != 'win32' and extra == 'deepspeed'
   - matplotlib>3.1 ; extra == 'dev'
-  - omegaconf>=2.2.3 ; extra == 'dev'
-  - hydra-core>=1.2.0 ; extra == 'dev'
-  - jsonargparse[signatures]>=4.27.7 ; extra == 'dev'
+  - omegaconf>=2.0.5 ; extra == 'dev'
+  - hydra-core>=1.0.5 ; extra == 'dev'
+  - jsonargparse[signatures]>=4.18.0 ; extra == 'dev'
   - rich>=12.3.0 ; extra == 'dev'
   - tensorboardx>=2.2 ; extra == 'dev'
-  - bitsandbytes>=0.42.0 ; extra == 'dev'
-  - requests<2.32.0 ; extra == 'dev'
-  - torchvision>=0.15.0 ; extra == 'dev'
-  - ipython[all]<8.15.0 ; extra == 'dev'
+  - torchvision>=0.12.0 ; extra == 'dev'
+  - gym[classic-control]>=0.17.0 ; extra == 'dev'
+  - ipython[all]<8.14.1 ; extra == 'dev'
   - torchmetrics>=0.10.0 ; extra == 'dev'
-  - lightning-utilities>=0.8.0 ; extra == 'dev'
-  - coverage==7.3.1 ; extra == 'dev'
-  - pytest==7.4.0 ; extra == 'dev'
-  - pytest-cov==4.1.0 ; extra == 'dev'
-  - pytest-timeout==2.1.0 ; extra == 'dev'
-  - pytest-rerunfailures==12.0 ; extra == 'dev'
-  - pytest-random-order==1.1.0 ; extra == 'dev'
+  - lightning-utilities>=0.7.0 ; extra == 'dev'
+  - coverage==7.2.5 ; extra == 'dev'
+  - pytest==7.3.1 ; extra == 'dev'
+  - pytest-cov==4.0.0 ; extra == 'dev'
+  - pytest-forked==1.4.0 ; extra == 'dev'
+  - pytest-rerunfailures==10.3 ; extra == 'dev'
   - cloudpickle>=1.3 ; extra == 'dev'
   - scikit-learn>0.22.1 ; extra == 'dev'
-  - onnx>=0.14.0 ; extra == 'dev'
-  - onnxruntime>=0.15.0 ; extra == 'dev'
-  - psutil<5.9.6 ; extra == 'dev'
+  - onnx<1.15.0 ; extra == 'dev'
+  - onnxruntime<1.16.0 ; extra == 'dev'
+  - psutil<5.9.5 ; extra == 'dev'
   - pandas>1.0 ; extra == 'dev'
-  - fastapi ; extra == 'dev'
-  - uvicorn ; extra == 'dev'
+  - fastapi<0.98.0 ; extra == 'dev'
+  - uvicorn<0.22.1 ; extra == 'dev'
   - tensorboard>=2.9.1 ; extra == 'dev'
-  - deepspeed>=0.8.2,<=0.9.3 ; sys_platform != 'darwin' and sys_platform != 'win32' and extra == 'dev'
-  - requests<2.32.0 ; extra == 'examples'
-  - torchvision>=0.15.0 ; extra == 'examples'
-  - ipython[all]<8.15.0 ; extra == 'examples'
+  - protobuf<=3.20.1 ; extra == 'dev'
+  - deepspeed>=0.8.2 ; sys_platform != 'win32' and extra == 'dev'
+  - torchvision>=0.12.0 ; extra == 'examples'
+  - gym[classic-control]>=0.17.0 ; extra == 'examples'
+  - ipython[all]<8.14.1 ; extra == 'examples'
   - torchmetrics>=0.10.0 ; extra == 'examples'
-  - lightning-utilities>=0.8.0 ; extra == 'examples'
+  - lightning-utilities>=0.7.0 ; extra == 'examples'
   - matplotlib>3.1 ; extra == 'extra'
-  - omegaconf>=2.2.3 ; extra == 'extra'
-  - hydra-core>=1.2.0 ; extra == 'extra'
-  - jsonargparse[signatures]>=4.27.7 ; extra == 'extra'
+  - omegaconf>=2.0.5 ; extra == 'extra'
+  - hydra-core>=1.0.5 ; extra == 'extra'
+  - jsonargparse[signatures]>=4.18.0 ; extra == 'extra'
   - rich>=12.3.0 ; extra == 'extra'
   - tensorboardx>=2.2 ; extra == 'extra'
-  - bitsandbytes>=0.42.0 ; extra == 'extra'
-  - deepspeed>=0.8.2,<=0.9.3 ; sys_platform != 'darwin' and sys_platform != 'win32' and extra == 'strategies'
-  - coverage==7.3.1 ; extra == 'test'
-  - pytest==7.4.0 ; extra == 'test'
-  - pytest-cov==4.1.0 ; extra == 'test'
-  - pytest-timeout==2.1.0 ; extra == 'test'
-  - pytest-rerunfailures==12.0 ; extra == 'test'
-  - pytest-random-order==1.1.0 ; extra == 'test'
+  - deepspeed>=0.8.2 ; sys_platform != 'win32' and extra == 'strategies'
+  - coverage==7.2.5 ; extra == 'test'
+  - pytest==7.3.1 ; extra == 'test'
+  - pytest-cov==4.0.0 ; extra == 'test'
+  - pytest-forked==1.4.0 ; extra == 'test'
+  - pytest-rerunfailures==10.3 ; extra == 'test'
   - cloudpickle>=1.3 ; extra == 'test'
   - scikit-learn>0.22.1 ; extra == 'test'
-  - onnx>=0.14.0 ; extra == 'test'
-  - onnxruntime>=0.15.0 ; extra == 'test'
-  - psutil<5.9.6 ; extra == 'test'
+  - onnx<1.15.0 ; extra == 'test'
+  - onnxruntime<1.16.0 ; extra == 'test'
+  - psutil<5.9.5 ; extra == 'test'
   - pandas>1.0 ; extra == 'test'
-  - fastapi ; extra == 'test'
-  - uvicorn ; extra == 'test'
+  - fastapi<0.98.0 ; extra == 'test'
+  - uvicorn<0.22.1 ; extra == 'test'
   - tensorboard>=2.9.1 ; extra == 'test'
+  - protobuf<=3.20.1 ; extra == 'test'
   requires_python: '>=3.8'
 - conda: https://conda.anaconda.org/pytorch/noarch/pytorch-mutex-1.0-cuda.tar.bz2
   build_number: 100
