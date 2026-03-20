@@ -17,7 +17,7 @@ The environment is managed with [Pixi](https://pixi.sh/latest/).
 
   - Install Pixi:
 
-    ```curl -fsSL https://pixi.sh/install.sh | bash```
+    ```curl -fsSL https://pixi.sh/install.sh | sh```
 
   - Install the environment:
 
