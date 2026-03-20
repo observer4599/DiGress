@@ -9,6 +9,7 @@ import hydra
 from omegaconf import DictConfig
 from pytorch_lightning import Trainer
 from pytorch_lightning.callbacks import ModelCheckpoint
+from pytorch_lightning.loggers import TensorBoardLogger
 from pytorch_lightning.utilities.warnings import PossibleUserWarning
 
 from src import utils
@@ -187,6 +188,13 @@ def main(cfg: DictConfig):
         print("[WARNING]: Run is called 'debug' -- it will run with fast_dev_run. ")
 
     use_gpu = cfg.general.gpus > 0 and torch.cuda.is_available()
+    loggers = []
+    if cfg.general.wandb != 'disabled':
+        loggers.append(TensorBoardLogger(
+            save_dir='runs',
+            name=f'graph_ddm_{cfg.dataset.name}',
+            version=cfg.general.name,
+        ))
     trainer = Trainer(gradient_clip_val=cfg.train.clip_grad,
                       strategy="ddp_find_unused_parameters_true",  # Needed to load old checkpoints
                       accelerator='gpu' if use_gpu else 'cpu',
@@ -197,7 +205,7 @@ def main(cfg: DictConfig):
                       enable_progress_bar=False,
                       callbacks=callbacks,
                       log_every_n_steps=50 if name != 'debug' else 1,
-                      logger = [])
+                      logger=loggers)
 
     if not cfg.general.test_only:
         trainer.fit(model, datamodule=datamodule, ckpt_path=cfg.general.resume)

@@ -3,7 +3,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 import pytorch_lightning as pl
 import time
-import wandb
 import os
 
 from models.transformer_model import GraphTransformer
@@ -126,8 +125,6 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
     def on_fit_start(self) -> None:
         self.train_iterations = len(self.trainer.datamodule.train_dataloader())
         self.print("Size of the input features", self.Xdim, self.Edim, self.ydim)
-        if self.local_rank == 0:
-            utils.setup_wandb(self.cfg)
 
     def on_train_epoch_start(self) -> None:
         self.print("Starting train epoch...")
@@ -168,12 +165,10 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
     def on_validation_epoch_end(self) -> None:
         metrics = [self.val_nll.compute(), self.val_X_kl.compute() * self.T, self.val_E_kl.compute() * self.T,
                    self.val_X_logp.compute(), self.val_E_logp.compute()]
-        if wandb.run:
-            wandb.log({"val/epoch_NLL": metrics[0],
-                       "val/X_kl": metrics[1],
+        self.log_dict({"val/X_kl": metrics[1],
                        "val/E_kl": metrics[2],
                        "val/X_logp": metrics[3],
-                       "val/E_logp": metrics[4]}, commit=False)
+                       "val/E_logp": metrics[4]})
 
         self.print(f"Epoch {self.current_epoch}: Val NLL {metrics[0] :.2f} -- Val Atom type KL {metrics[1] :.2f} -- ",
                    f"Val Edge type KL: {metrics[2] :.2f}")
@@ -223,8 +218,6 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
         self.test_E_kl.reset()
         self.test_X_logp.reset()
         self.test_E_logp.reset()
-        if self.local_rank == 0:
-            utils.setup_wandb(self.cfg)
 
     def test_step(self, data, i):
         dense_data, node_mask = utils.to_dense(data.x, data.edge_index, data.edge_attr, data.batch)
@@ -239,19 +232,16 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
         """ Measure likelihood on a test set and compute stability metrics. """
         metrics = [self.test_nll.compute(), self.test_X_kl.compute(), self.test_E_kl.compute(),
                    self.test_X_logp.compute(), self.test_E_logp.compute()]
-        if wandb.run:
-            wandb.log({"test/epoch_NLL": metrics[0],
-                       "test/X_kl": metrics[1],
+        self.log_dict({"test/X_kl": metrics[1],
                        "test/E_kl": metrics[2],
                        "test/X_logp": metrics[3],
-                       "test/E_logp": metrics[4]}, commit=False)
+                       "test/E_logp": metrics[4]})
 
         self.print(f"Epoch {self.current_epoch}: Test NLL {metrics[0] :.2f} -- Test Atom type KL {metrics[1] :.2f} -- ",
                    f"Test Edge type KL: {metrics[2] :.2f}")
 
         test_nll = metrics[0]
-        if wandb.run:
-            wandb.log({"test/epoch_NLL": test_nll}, commit=False)
+        self.log("test/epoch_NLL", test_nll)
 
         self.print(f'Test loss: {test_nll :.4f}')
 
@@ -474,12 +464,11 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
         # Update NLL metric object and return batch nll
         nll = (self.test_nll if test else self.val_nll)(nlls)        # Average over the batch
 
-        if wandb.run:
-            wandb.log({"kl prior": kl_prior.mean(),
+        self.log_dict({"kl prior": kl_prior.mean(),
                        "Estimator loss terms": loss_all_t.mean(),
                        "log_pn": log_pN.mean(),
                        "loss_term_0": loss_term_0,
-                       'batch_test_nll' if test else 'val_nll': nll}, commit=False)
+                       'batch_test_nll' if test else 'val_nll': nll})
         return nll
 
     def forward(self, noisy_data, extra_data, node_mask):
@@ -579,9 +568,11 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
                                                          f'chains/molecule_{batch_id + i}')
                 if not os.path.exists(result_path):
                     os.makedirs(result_path)
+                    writer = self.logger.experiment if self.logger else None
                     _ = self.visualization_tools.visualize_chain(result_path,
                                                                  chain_X[:, i, :].numpy(),
-                                                                 chain_E[:, i, :].numpy())
+                                                                 chain_E[:, i, :].numpy(),
+                                                                 writer=writer)
                 self.print('\r{}/{} complete'.format(i+1, num_molecules), end='', flush=True)
             self.print('\nVisualizing molecules...')
 
@@ -589,7 +580,8 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
             current_path = os.getcwd()
             result_path = os.path.join(current_path,
                                        f'graphs/{self.name}/epoch{self.current_epoch}_b{batch_id}/')
-            self.visualization_tools.visualize(result_path, molecule_list, save_final)
+            writer = self.logger.experiment if self.logger else None
+            self.visualization_tools.visualize(result_path, molecule_list, save_final, writer=writer)
             self.print("Done.")
 
         return molecule_list

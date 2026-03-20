@@ -29,11 +29,11 @@ PyGSP = "==0.6.1"
 pytorch-lightning = "==2.0.4"
 torch_geometric = "==2.7.0"
 torchmetrics = "==1.9.0"
-wandb = "==0.25.1"
+tensorboard = ">=2.14"
 digress = { path = ".", editable = true }
 
 [environments]
 default = { solve-group = "default" }
 
 [tasks]
-train = "python src/main.py general.wandb=offline"
+train = "python src/main.py"

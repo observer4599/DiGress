@@ -6,7 +6,6 @@ from src.analysis.rdkit_functions import compute_molecular_metrics
 import torch
 from torchmetrics import Metric, MetricCollection
 from torch import Tensor
-import wandb
 import torch.nn as nn
 
 
@@ -25,8 +24,6 @@ class TrainMolecularMetrics(nn.Module):
                 to_log['train/' + key] = val.item()
             for key, val in self.train_bond_metrics.compute().items():
                 to_log['train/' + key] = val.item()
-            if wandb.run:
-                wandb.log(to_log, commit=False)
 
     def reset(self):
         for metric in [self.train_atom_metrics, self.train_bond_metrics]:
@@ -41,9 +38,6 @@ class TrainMolecularMetrics(nn.Module):
             to_log['train_epoch/epoch' + key] = val.item()
         for key, val in epoch_bond_metrics.items():
             to_log['train_epoch/epoch' + key] = val.item()
-
-        if wandb.run:
-            wandb.log(to_log, commit=False)
 
         for key, val in epoch_atom_metrics.items():
             epoch_atom_metrics[key] = f"{val.item() :.3f}"
@@ -135,17 +129,6 @@ class SamplingMolecularMetrics(nn.Module):
         edge_mae = self.edge_dist_mae.compute()
         valency_mae = self.valency_dist_mae.compute()
 
-        if wandb.run:
-            wandb.log(to_log, commit=False)
-            wandb.run.summary['Gen n distribution'] = generated_n_dist
-            wandb.run.summary['Gen node distribution'] = generated_node_dist
-            wandb.run.summary['Gen edge distribution'] = generated_edge_dist
-            wandb.run.summary['Gen valency distribution'] = generated_valency_dist
-
-            wandb.log({'basic_metrics/n_mae': n_mae,
-                       'basic_metrics/node_mae': node_mae,
-                       'basic_metrics/edge_mae': edge_mae,
-                       'basic_metrics/valency_mae': valency_mae}, commit=False)
 
         if local_rank == 0:
             print("Custom metrics computed.")

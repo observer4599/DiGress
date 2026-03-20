@@ -23,7 +23,6 @@ from scipy.linalg import eigvalsh
 from scipy.stats import chi2
 from src.analysis.dist_helper import compute_mmd, gaussian_emd, gaussian, emd, gaussian_tv, disc
 from torch_geometric.utils import to_networkx
-import wandb
 
 PRINT_TIME = False
 __all__ = ['degree_stats', 'clustering_stats', 'orbit_stats_all', 'spectral_stats', 'eval_acc_lobster_graph']
@@ -777,8 +776,6 @@ class SpectreSamplingMetrics(nn.Module):
                 print("Computing degree stats..")
             degree = degree_stats(reference_graphs, networkx_graphs, is_parallel=True,
                                   compute_emd=self.compute_emd)
-            if wandb.run:
-                wandb.run.summary['degree'] = degree
 
         # val_eigvals = [graph["eigval"][1:self.k + 1].cpu().detach().numpy() for graph in self.val]
         # train_eigvals = [graph["eigval"][1:self.k + 1].cpu().detach().numpy() for graph in self.train]
@@ -795,8 +792,6 @@ class SpectreSamplingMetrics(nn.Module):
                                      compute_emd=self.compute_emd)
 
             to_log['spectre'] = spectre
-            if wandb.run:
-              wandb.run.summary['spectre'] = spectre
 
         if 'clustering' in self.metrics_list:
             if local_rank == 0:
@@ -804,8 +799,6 @@ class SpectreSamplingMetrics(nn.Module):
             clustering = clustering_stats(reference_graphs, networkx_graphs, bins=100, is_parallel=True,
                                           compute_emd=self.compute_emd)
             to_log['clustering'] = clustering
-            if wandb.run:
-                wandb.run.summary['clustering'] = clustering
 
         if 'motif' in self.metrics_list:
             if local_rank == 0:
@@ -813,32 +806,24 @@ class SpectreSamplingMetrics(nn.Module):
             motif = motif_stats(reference_graphs, networkx_graphs, motif_type='4cycle', ground_truth_match=None, bins=100,
                                 compute_emd=self.compute_emd)
             to_log['motif'] = motif
-            if wandb.run:
-                wandb.run.summary['motif'] = motif
 
         if 'orbit' in self.metrics_list:
             if local_rank == 0:
                 print("Computing orbit stats...")
             orbit = orbit_stats_all(reference_graphs, networkx_graphs, compute_emd=self.compute_emd)
             to_log['orbit'] = orbit
-            if wandb.run:
-                wandb.run.summary['orbit'] = orbit
 
         if 'sbm' in self.metrics_list:
             if local_rank == 0:
                 print("Computing accuracy...")
             acc = eval_acc_sbm_graph(networkx_graphs, refinement_steps=100, strict=True)
             to_log['sbm_acc'] = acc
-            if wandb.run:
-                wandb.run.summary['sbmacc'] = acc
 
         if 'planar' in self.metrics_list:
             if local_rank ==0:
                 print('Computing planar accuracy...')
             planar_acc = eval_acc_planar_graph(networkx_graphs)
             to_log['planar_acc'] = planar_acc
-            if wandb.run:
-                wandb.run.summary['planar_acc'] = planar_acc
 
         if 'sbm' or 'planar' in self.metrics_list:
             if local_rank == 0:
@@ -853,8 +838,6 @@ class SpectreSamplingMetrics(nn.Module):
 
         if local_rank == 0:
             print("Sampling statistics", to_log)
-        if wandb.run:
-            wandb.log(to_log, commit=False)
 
     def reset(self):
         pass

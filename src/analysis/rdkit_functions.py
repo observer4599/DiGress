@@ -1,7 +1,6 @@
 import numpy as np
 import torch
 import re
-import wandb
 try:
     from rdkit import Chem
     print("Found rdkit, all good")
@@ -316,19 +315,10 @@ def compute_molecular_metrics(molecule_list, train_smiles, dataset_info):
         fraction_mol_stable = molecule_stable / float(n_molecules)
         fraction_atm_stable = nr_stable_bonds / float(n_atoms)
         validity_dict = {'mol_stable': fraction_mol_stable, 'atm_stable': fraction_atm_stable}
-        if wandb.run:
-            wandb.log(validity_dict)
     else:
         validity_dict = {'mol_stable': -1, 'atm_stable': -1}
 
     metrics = BasicMolecularMetrics(dataset_info, train_smiles)
     rdkit_metrics = metrics.evaluate(molecule_list)
     all_smiles = rdkit_metrics[-1]
-    if wandb.run:
-        nc = rdkit_metrics[-2]
-        dic = {'Validity': rdkit_metrics[0][0], 'Relaxed Validity': rdkit_metrics[0][1],
-               'Uniqueness': rdkit_metrics[0][2], 'Novelty': rdkit_metrics[0][3],
-               'nc_max': nc['nc_max'], 'nc_mu': nc['nc_mu']}
-        wandb.log(dic)
-
     return validity_dict, rdkit_metrics, all_smiles

@@ -4,7 +4,6 @@ from omegaconf import OmegaConf, open_dict
 from torch_geometric.utils import to_dense_adj, to_dense_batch
 import torch
 import omegaconf
-import wandb
 
 
 def create_folders(args):
@@ -131,9 +130,3 @@ class PlaceHolder:
         return self
 
 
-def setup_wandb(cfg):
-    config_dict = omegaconf.OmegaConf.to_container(cfg, resolve=True, throw_on_missing=True)
-    kwargs = {'name': cfg.general.name, 'project': f'graph_ddm_{cfg.dataset.name}', 'config': config_dict,
-              'settings': wandb.Settings(_disable_stats=True), 'reinit': True, 'mode': cfg.general.wandb}
-    wandb.init(**kwargs)
-    wandb.save('*.txt')

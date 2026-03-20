@@ -1,18 +1,31 @@
 import os
+from typing import Optional
 
-from rdkit import Chem
-from rdkit.Chem import Draw, AllChem
-from rdkit.Geometry import Point3D
-from rdkit import RDLogger
 import imageio
+import matplotlib.pyplot as plt
 import networkx as nx
 import numpy as np
 import rdkit.Chem
-import wandb
-import matplotlib.pyplot as plt
+import torch
+from rdkit import Chem, RDLogger
+from rdkit.Chem import AllChem, Draw
+from rdkit.Geometry import Point3D
+from torch.utils.tensorboard import SummaryWriter
 
 
+def _to_chw_uint8(img: np.ndarray) -> np.ndarray:
+    """Convert an (H, W, C) or (H, W, 4) uint8 array to (C, H, W) RGB."""
+    if img.ndim == 3 and img.shape[2] == 4:
+        img = img[:, :, :3]
+    return np.transpose(img, (2, 0, 1))
 
+
+def _frames_to_video(frames: list[np.ndarray]) -> torch.Tensor:
+    """Stack (H, W, C) frame arrays into a (1, T, C, H, W) uint8 tensor."""
+    rgb = [f[:, :, :3] if f.ndim == 3 and f.shape[2] == 4 else f for f in frames]
+    video = np.stack(rgb, axis=0)          # (T, H, W, C)
+    video = np.transpose(video, (0, 3, 1, 2))  # (T, C, H, W)
+    return torch.from_numpy(video).unsqueeze(0)  # (1, T, C, H, W)
 
 
 class MolecularVisualization:
@@ -65,7 +78,14 @@ class MolecularVisualization:
             mol = None
         return mol
 
-    def visualize(self, path: str, molecules: list, num_molecules_to_visualize: int, log='graph'):
+    def visualize(
+        self,
+        path: str,
+        molecules: list,
+        num_molecules_to_visualize: int,
+        log='graph',
+        writer: Optional[SummaryWriter] = None,
+    ):
         # define path to save figures
         if not os.path.exists(path):
             os.makedirs(path)
@@ -75,20 +95,28 @@ class MolecularVisualization:
         if num_molecules_to_visualize > len(molecules):
             print(f"Shortening to {len(molecules)}")
             num_molecules_to_visualize = len(molecules)
-        
+
         for i in range(num_molecules_to_visualize):
             file_path = os.path.join(path, 'molecule_{}.png'.format(i))
             mol = self.mol_from_graphs(molecules[i][0].numpy(), molecules[i][1].numpy())
             try:
                 Draw.MolToFile(mol, file_path)
-                if wandb.run and log is not None:
-                    print(f"Saving {file_path} to wandb")
-                    wandb.log({log: wandb.Image(file_path)}, commit=True)
+                if writer is not None and log is not None:
+                    print(f"Saving {file_path} to TensorBoard")
+                    img = imageio.imread(file_path)
+                    writer.add_image(log, _to_chw_uint8(img), global_step=i)
             except rdkit.Chem.KekulizeException:
                 print("Can't kekulize molecule")
 
 
-    def visualize_chain(self, path, nodes_list, adjacency_matrix, trainer=None):
+    def visualize_chain(
+        self,
+        path,
+        nodes_list,
+        adjacency_matrix,
+        trainer=None,
+        writer: Optional[SummaryWriter] = None,
+    ):
         RDLogger.DisableLog('rdApp.*')
         # convert graphs to the rdkit molecules
         mols = [self.mol_from_graphs(nodes_list[i], adjacency_matrix[i]) for i in range(nodes_list.shape[0])]
@@ -124,9 +152,9 @@ class MolecularVisualization:
         imgs.extend([imgs[-1]] * 10)
         imageio.mimsave(gif_path, imgs, subrectangles=True, duration=20)
 
-        if wandb.run:
-            print(f"Saving {gif_path} to wandb")
-            wandb.log({"chain": wandb.Video(gif_path, fps=5, format="gif")}, commit=True)
+        if writer is not None:
+            print(f"Saving chain to TensorBoard")
+            writer.add_video("chain", _frames_to_video(imgs), fps=5)
 
         # draw grid image
         try:
@@ -183,7 +211,14 @@ class NonMolecularVisualization:
         plt.savefig(path)
         plt.close("all")
 
-    def visualize(self, path: str, graphs: list, num_graphs_to_visualize: int, log='graph'):
+    def visualize(
+        self,
+        path: str,
+        graphs: list,
+        num_graphs_to_visualize: int,
+        log='graph',
+        writer: Optional[SummaryWriter] = None,
+    ):
         # define path to save figures
         if not os.path.exists(path):
             os.makedirs(path)
@@ -193,11 +228,17 @@ class NonMolecularVisualization:
             file_path = os.path.join(path, 'graph_{}.png'.format(i))
             graph = self.to_networkx(graphs[i][0].numpy(), graphs[i][1].numpy())
             self.visualize_non_molecule(graph=graph, pos=None, path=file_path)
-            im = plt.imread(file_path)
-            if wandb.run and log is not None:
-                wandb.log({log: [wandb.Image(im, caption=file_path)]})
+            if writer is not None and log is not None:
+                img = imageio.imread(file_path)
+                writer.add_image(log, _to_chw_uint8(img), global_step=i)
 
-    def visualize_chain(self, path, nodes_list, adjacency_matrix):
+    def visualize_chain(
+        self,
+        path,
+        nodes_list,
+        adjacency_matrix,
+        writer: Optional[SummaryWriter] = None,
+    ):
         # convert graphs to networkx
         graphs = [self.to_networkx(nodes_list[i], adjacency_matrix[i]) for i in range(nodes_list.shape[0])]
         # find the coordinates of atoms in the final molecule
@@ -217,5 +258,5 @@ class NonMolecularVisualization:
         gif_path = os.path.join(os.path.dirname(path), '{}.gif'.format(path.split('/')[-1]))
         imgs.extend([imgs[-1]] * 10)
         imageio.mimsave(gif_path, imgs, subrectangles=True, duration=20)
-        if wandb.run:
-            wandb.log({'chain': [wandb.Video(gif_path, caption=gif_path, format="gif")]})
+        if writer is not None:
+            writer.add_video("chain", _frames_to_video(imgs), fps=5)

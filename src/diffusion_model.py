@@ -5,8 +5,6 @@ import torch
 import torch.nn as nn
 import numpy as np
 import pytorch_lightning as pl
-import wandb
-
 from models.transformer_model import GraphTransformer
 from diffusion.noise_schedule import PredefinedNoiseSchedule
 from src.diffusion import diffusion_utils
@@ -120,8 +118,6 @@ class LiftedDenoisingDiffusion(pl.LightningModule):
 
     def on_fit_start(self) -> None:
         self.train_iterations = len(self.trainer.datamodule.train_dataloader())
-        if self.local_rank == 0:
-            utils.setup_wandb(self.cfg)
 
     def on_train_epoch_start(self) -> None:
         self.start_epoch_time = time.time()
@@ -165,14 +161,12 @@ class LiftedDenoisingDiffusion(pl.LightningModule):
         metrics = [self.val_nll.compute(), self.val_X_mse.compute(), self.val_E_mse.compute(),
                    self.val_y_mse.compute(), self.val_X_logp.compute(), self.val_E_logp.compute(),
                    self.val_y_logp.compute()]
-        if wandb.run:
-            wandb.log({"val/epoch_NLL": metrics[0],
-                       "val/X_mse": metrics[1],
+        self.log_dict({"val/X_mse": metrics[1],
                        "val/E_mse": metrics[2],
                        "val/y_mse": metrics[3],
                        "val/X_logp": metrics[4],
                        "val/E_logp": metrics[5],
-                       "val/y_logp": metrics[6]}, commit=False)
+                       "val/y_logp": metrics[6]})
 
         print(f"Epoch {self.current_epoch}: Val NLL {metrics[0] :.2f} -- Val Atom type MSE {metrics[1] :.2f} -- ",
               f"Val Edge type MSE: {metrics[2] :.2f} -- Val Global feat. MSE {metrics[3] :.2f}",
@@ -182,8 +176,7 @@ class LiftedDenoisingDiffusion(pl.LightningModule):
         # Log val nll with default Lightning logger, so it can be monitored by checkpoint callback
         val_nll = metrics[0]
         self.log("val/epoch_NLL", val_nll, sync_dist=True)
-        if wandb.run:
-            wandb.log(self.log_info(), commit=False)
+        self.log_dict(self.log_info())
 
         if val_nll < self.best_val_nll:
             self.best_val_nll = val_nll
@@ -227,8 +220,6 @@ class LiftedDenoisingDiffusion(pl.LightningModule):
         self.test_X_logp.reset()
         self.test_E_logp.reset()
         self.test_y_logp.reset()
-        if self.local_rank == 0:
-            utils.setup_wandb(self.cfg)
 
     def test_step(self, data, i):
         dense_data, node_mask = utils.to_dense(x=data.x, edge_index=data.edge_index, edge_attr=data.edge_attr,
@@ -248,15 +239,12 @@ class LiftedDenoisingDiffusion(pl.LightningModule):
         metrics = [self.test_nll.compute(), self.test_X_mse.compute(), self.test_E_mse.compute(),
                    self.test_y_mse.compute(), self.test_X_logp.compute(), self.test_E_logp.compute(),
                    self.test_y_logp.compute()]
-        log_dict={"test/epoch_NLL": metrics[0],
-         "test/X_mse": metrics[1],
-         "test/E_mse": metrics[2],
-         "test/y_mse": metrics[3],
-         "test/X_logp": metrics[4],
-         "test/E_logp": metrics[5],
-         "test/y_logp": metrics[6]}
-        if wandb.run:
-            wandb.log(log_dict, commit=False)
+        self.log_dict({"test/X_mse": metrics[1],
+                       "test/E_mse": metrics[2],
+                       "test/y_mse": metrics[3],
+                       "test/X_logp": metrics[4],
+                       "test/E_logp": metrics[5],
+                       "test/y_logp": metrics[6]})
 
         print(f"Epoch {self.current_epoch}: Test NLL {metrics[0] :.2f} -- Test Atom type MSE {metrics[1] :.2f} -- ",
               f"Test Edge type MSE: {metrics[2] :.2f} -- Test Global feat. MSE {metrics[3] :.2f}",
@@ -264,9 +252,8 @@ class LiftedDenoisingDiffusion(pl.LightningModule):
               f"-- Test y Reconstruction loss {metrics[6] : .2f}\n")
 
         test_nll = metrics[0]
-        if wandb.run:
-            wandb.log({"test/epoch_NLL": test_nll}, commit=False)
-            wandb.log(self.log_info(), commit=False)
+        self.log("test/epoch_NLL", test_nll)
+        self.log_dict(self.log_info())
 
         print(f'Test loss: {test_nll :.4f}')
 
@@ -529,12 +516,11 @@ class LiftedDenoisingDiffusion(pl.LightningModule):
 
         nll = self.test_nll(nlls) if test else self.val_nll(nlls)  # Average over the batch
 
-        wandb.log({"kl prior": kl_prior.mean(),
-                   "Estimator loss terms": loss_all_t.mean(),
-                   "Loss term 0": loss_term_0,
-                   "log_pn": log_pN.mean(),
-                   'test_nll' if test else 'val_nll': nll},
-                  commit=False)
+        self.log_dict({"kl prior": kl_prior.mean(),
+                       "Estimator loss terms": loss_all_t.mean(),
+                       "Loss term 0": loss_term_0,
+                       "log_pn": log_pN.mean(),
+                       'test_nll' if test else 'val_nll': nll})
         return nll
 
     def forward(self, noisy_data, extra_data, node_mask):
@@ -671,9 +657,11 @@ class LiftedDenoisingDiffusion(pl.LightningModule):
                                                          f'chains/molecule_{batch_id + i}')
                 if not os.path.exists(result_path):
                     os.makedirs(result_path)
+                    writer = self.logger.experiment if self.logger else None
                     _ = self.visualization_tools.visualize_chain(result_path,
                                                                  chain_X[:, i, :].numpy(),
-                                                                 chain_E[:, i, :].numpy())
+                                                                 chain_E[:, i, :].numpy(),
+                                                                 writer=writer)
                 print('\r{}/{} complete'.format(i+1, num_molecules), end='', flush=True)
 
             # Visualize the final molecules
@@ -681,7 +669,8 @@ class LiftedDenoisingDiffusion(pl.LightningModule):
             current_path = os.getcwd()
             result_path = os.path.join(current_path,
                                        f'graphs/{self.name}/epoch{self.current_epoch}_b{batch_id}/')
-            self.visualization_tools.visualize(result_path, molecule_list, save_final, log='graph')
+            writer = self.logger.experiment if self.logger else None
+            self.visualization_tools.visualize(result_path, molecule_list, save_final, log='graph', writer=writer)
             print("Done.")
 
         return molecule_list
