@@ -27,16 +27,16 @@ The environment is managed with [Pixi](https://pixi.sh/latest/).
 
     ```g++ -O2 -std=c++11 -o orca orca.cpp```
 
-### GPU training on Linux with CUDA 11.8
+### GPU training on Linux with CUDA
 
-Add the following sections to `pixi.toml`, then re-run `pixi install`:
+Add the following sections to `pixi.toml`, then re-run `pixi install`. Replace `cu118` with your CUDA version (e.g. `cu121`, `cu124`):
 
 ```toml
 [system-requirements]
 cuda = "11.8"
 
-[target.linux-64.dependencies]
-pytorch-cuda = { version = "11.8.*", channel = "pytorch" }
+[pypi-options]
+extra-index-urls = ["https://download.pytorch.org/whl/cu118"]
 ```
 
 ## Run the code

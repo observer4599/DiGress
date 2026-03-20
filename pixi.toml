@@ -7,11 +7,11 @@ platforms = ["osx-arm64", "linux-64"]
 
 [dependencies]
 python = "3.11.*"
-pytorch = { version = "==2.5.1", channel = "pytorch" }
-torchvision = { version = "==0.20.1", channel = "pytorch" }
 graph-tool = "==2.46"
 
 [pypi-dependencies]
+torch = "==2.5.1"
+torchvision = "==0.20.1"
 numpy = "==1.26.4"
 scipy = "==1.17.1"
 matplotlib = "==3.10.8"
