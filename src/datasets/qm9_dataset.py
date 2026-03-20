@@ -100,7 +100,8 @@ class QM9Dataset(InMemoryDataset):
             import rdkit  # noqa
             file_path = download_url(self.raw_url, self.raw_dir)
             extract_zip(file_path, self.raw_dir)
-            os.unlink(file_path)
+            if os.path.exists(file_path):
+                os.unlink(file_path)
 
             file_path = download_url(self.raw_url2, self.raw_dir)
             os.rename(osp.join(self.raw_dir, '3195404'),
@@ -108,7 +109,8 @@ class QM9Dataset(InMemoryDataset):
         except ImportError:
             path = download_url(self.processed_url, self.raw_dir)
             extract_zip(path, self.raw_dir)
-            os.unlink(path)
+            if os.path.exists(path):
+                os.unlink(path)
 
         if files_exist(self.split_paths):
             return
