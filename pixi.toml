@@ -37,4 +37,4 @@ digress = { path = ".", editable = true }
 default = { solve-group = "default" }
 
 [tasks]
-train = "python src/main.py"
+train = "python src/main.py general.wandb=offline"
