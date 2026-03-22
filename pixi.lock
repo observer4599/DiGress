@@ -204,7 +204,7 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/e9/70/9c2587d7a566c1e656b5fcdbc1d01afd34675d8418b8fc4da3eb4d9bc808/pytorch_lightning-2.0.4-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/10/99/781fe0c827be2742bcc775efefccb3b048a3a9c6ce9aec0cbf4a101677e5/pytz-2026.1.post1-py2.py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/71/60/917329f640924b18ff085ab889a11c763e0b573da888e8404ff486657602/pyyaml-6.0.3-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl
-      - pypi: https://files.pythonhosted.org/packages/33/65/c6b43cd906f164f4266612659e14d6fdbd0f4cfb09452979164f8977944c/rdkit-2023.3.2-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
+      - pypi: https://files.pythonhosted.org/packages/4c/e4/0c4656224167261093d057d018acb8b9ddbad22f3ebe3706424e23ef7b6b/rdkit-2025.9.6-cp311-cp311-manylinux_2_28_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/1e/db/4254e3eabe8020b458f1a747140d32277ec7a271daf1d235b70dc0b4e6e3/requests-2.32.5-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/0d/6d/b4752b044bf94cb802d88a888dc7d288baaf77d7910b7dedda74b5ceea0c/setuptools-79.0.1-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/b2/fe/81695a1aa331a842b582453b605175f419fe8540355886031328089d840a/sympy-1.13.1-py3-none-any.whl
@@ -366,7 +366,7 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/e9/70/9c2587d7a566c1e656b5fcdbc1d01afd34675d8418b8fc4da3eb4d9bc808/pytorch_lightning-2.0.4-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/10/99/781fe0c827be2742bcc775efefccb3b048a3a9c6ce9aec0cbf4a101677e5/pytz-2026.1.post1-py2.py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/16/19/13de8e4377ed53079ee996e1ab0a9c33ec2faf808a4647b7b4c0d46dd239/pyyaml-6.0.3-cp311-cp311-macosx_11_0_arm64.whl
-      - pypi: https://files.pythonhosted.org/packages/2c/15/05b4ead94efe30219eb94f16c645a5974939a7212a5731e0c3f0d0299cc6/rdkit-2023.3.2-cp311-cp311-macosx_11_0_arm64.whl
+      - pypi: https://files.pythonhosted.org/packages/b3/fa/61735db51afc02c2c6d1d203dc5b0ddade8bb951fe72672f463cd111a77b/rdkit-2025.9.6-cp311-cp311-macosx_11_0_arm64.whl
       - pypi: https://files.pythonhosted.org/packages/1e/db/4254e3eabe8020b458f1a747140d32277ec7a271daf1d235b70dc0b4e6e3/requests-2.32.5-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/0d/6d/b4752b044bf94cb802d88a888dc7d288baaf77d7910b7dedda74b5ceea0c/setuptools-79.0.1-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/b2/fe/81695a1aa331a842b582453b605175f419fe8540355886031328089d840a/sympy-1.13.1-py3-none-any.whl
@@ -3844,17 +3844,17 @@ packages:
   purls: []
   size: 516376
   timestamp: 1720814307311
-- pypi: https://files.pythonhosted.org/packages/2c/15/05b4ead94efe30219eb94f16c645a5974939a7212a5731e0c3f0d0299cc6/rdkit-2023.3.2-cp311-cp311-macosx_11_0_arm64.whl
+- pypi: https://files.pythonhosted.org/packages/4c/e4/0c4656224167261093d057d018acb8b9ddbad22f3ebe3706424e23ef7b6b/rdkit-2025.9.6-cp311-cp311-manylinux_2_28_x86_64.whl
   name: rdkit
-  version: 2023.3.2
-  sha256: 3696e3994e551ae08cbcda0ac088f83cd975762246c3b62937d69eba9144269b
+  version: 2025.9.6
+  sha256: 3f4fc084890efb29b51ea4679bb07d28b276b6e73e3381e678a5ba057b4c4222
   requires_dist:
   - numpy
   - pillow
-- pypi: https://files.pythonhosted.org/packages/33/65/c6b43cd906f164f4266612659e14d6fdbd0f4cfb09452979164f8977944c/rdkit-2023.3.2-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
+- pypi: https://files.pythonhosted.org/packages/b3/fa/61735db51afc02c2c6d1d203dc5b0ddade8bb951fe72672f463cd111a77b/rdkit-2025.9.6-cp311-cp311-macosx_11_0_arm64.whl
   name: rdkit
-  version: 2023.3.2
-  sha256: 0b75b705f026be56b76a2831cc53f325b63d3565dd6419af278cfd085c2e2419
+  version: 2025.9.6
+  sha256: 8348ec9c5a223d94fa848f8330a68f746d870f61540a846fe8ea356998ea77f1
   requires_dist:
   - numpy
   - pillow

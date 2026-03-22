@@ -148,6 +148,9 @@ class QM9Dataset(InMemoryDataset):
             if i in skip or i not in target_df.index:
                 continue
 
+            if mol is None:
+                continue
+
             N = mol.GetNumAtoms()
 
             type_idx = []
