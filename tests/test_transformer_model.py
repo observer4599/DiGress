@@ -16,19 +16,22 @@ DX, DE, DY, N_HEAD = 8, 4, 6, 2
 
 
 @pytest.fixture
-def node_edge_block():
+def node_edge_block() -> NodeEdgeBlock:
+    """Return a NodeEdgeBlock with a fixed random seed for reproducibility."""
     torch.manual_seed(0)
     return NodeEdgeBlock(dx=DX, de=DE, dy=DY, n_head=N_HEAD)
 
 
 @pytest.fixture
-def xey_layer():
+def xey_layer() -> XEyTransformerLayer:
+    """Return an XEyTransformerLayer with a fixed random seed for reproducibility."""
     torch.manual_seed(0)
     return XEyTransformerLayer(dx=DX, de=DE, dy=DY, n_head=N_HEAD, dim_ffX=16, dim_ffE=8, dim_ffy=16)
 
 
 @pytest.fixture
-def graph_transformer():
+def graph_transformer() -> GraphTransformer:
+    """Return a two-layer GraphTransformer with small dims, fixed seed for reproducibility."""
     torch.manual_seed(0)
     return GraphTransformer(
         n_layers=2,
@@ -43,8 +46,8 @@ def graph_transformer():
 
 # --- NodeEdgeBlock ---
 
-def test_node_edge_block_output_shapes(node_edge_block):
-    # forward returns (newX, newE, new_y) with the expected shapes
+def test_node_edge_block_output_shapes(node_edge_block: NodeEdgeBlock) -> None:
+    """Verify that forward returns (newX, newE, new_y) with the expected shapes."""
     X = torch.randn(BS, N, DX)
     E = torch.randn(BS, N, N, DE)
     y = torch.randn(BS, DY)
@@ -55,8 +58,8 @@ def test_node_edge_block_output_shapes(node_edge_block):
     assert new_y.shape == (BS, DY)
 
 
-def test_node_edge_block_masked_nodes_are_zero(node_edge_block):
-    # nodes with mask=0 produce zero output in newX and zero rows/cols in newE
+def test_node_edge_block_masked_nodes_are_zero(node_edge_block: NodeEdgeBlock) -> None:
+    """Verify that nodes with mask=0 produce zero output in newX and zero rows/cols in newE."""
     X = torch.randn(BS, N, DX)
     E = torch.randn(BS, N, N, DE)
     y = torch.randn(BS, DY)
@@ -70,8 +73,8 @@ def test_node_edge_block_masked_nodes_are_zero(node_edge_block):
 
 # --- XEyTransformerLayer ---
 
-def test_xey_layer_output_shapes(xey_layer):
-    # forward returns X, E, y with the same shapes as the inputs
+def test_xey_layer_output_shapes(xey_layer: XEyTransformerLayer) -> None:
+    """Verify that forward returns X, E, y with the same shapes as the inputs."""
     X = torch.randn(BS, N, DX)
     E = torch.randn(BS, N, N, DE)
     y = torch.randn(BS, DY)
@@ -84,8 +87,8 @@ def test_xey_layer_output_shapes(xey_layer):
 
 # --- GraphTransformer ---
 
-def test_graph_transformer_output_shapes(graph_transformer):
-    # forward returns a PlaceHolder with X, E, y of the expected output dims
+def test_graph_transformer_output_shapes(graph_transformer: GraphTransformer) -> None:
+    """Verify that forward returns a PlaceHolder with X, E, y of the expected output dims."""
     X = torch.randn(BS, N, 3)
     E = torch.randn(BS, N, N, 2)
     y = torch.randn(BS, 4)
@@ -96,8 +99,12 @@ def test_graph_transformer_output_shapes(graph_transformer):
     assert out.y.shape == (BS, 4)
 
 
-def test_graph_transformer_edge_symmetry(graph_transformer):
-    # output E is symmetric: E[b, i, j] == E[b, j, i]
+def test_graph_transformer_edge_symmetry(graph_transformer: GraphTransformer) -> None:
+    """Verify that output E is symmetric: E[b, i, j] == E[b, j, i].
+
+    GraphTransformer enforces the undirected-graph invariant by averaging E with
+    its transpose before returning, so this property must hold exactly.
+    """
     torch.manual_seed(1)
     X = torch.randn(BS, N, 3)
     E = torch.randn(BS, N, N, 2)
@@ -107,8 +114,12 @@ def test_graph_transformer_edge_symmetry(graph_transformer):
     assert torch.allclose(out.E, out.E.transpose(1, 2), atol=1e-6)
 
 
-def test_graph_transformer_diagonal_zeroed(graph_transformer):
-    # diagonal entries of output E are zero (self-loops are masked out)
+def test_graph_transformer_diagonal_zeroed(graph_transformer: GraphTransformer) -> None:
+    """Verify that diagonal entries of output E are zero (self-loops are masked out).
+
+    GraphTransformer multiplies E by a diagonal mask before symmetrising, so
+    E[b, i, i] must be the zero vector for all batches b and nodes i.
+    """
     torch.manual_seed(1)
     X = torch.randn(BS, N, 3)
     E = torch.randn(BS, N, N, 2)
@@ -120,8 +131,8 @@ def test_graph_transformer_diagonal_zeroed(graph_transformer):
             assert torch.allclose(out.E[b, i, i], torch.zeros(2), atol=1e-6)
 
 
-def test_graph_transformer_masked_nodes_zeroed(graph_transformer):
-    # masked-out nodes produce zero vectors in output X
+def test_graph_transformer_masked_nodes_zeroed(graph_transformer: GraphTransformer) -> None:
+    """Verify that masked-out nodes produce zero vectors in output X."""
     X = torch.randn(BS, N, 3)
     E = torch.randn(BS, N, N, 2)
     y = torch.randn(BS, 4)
