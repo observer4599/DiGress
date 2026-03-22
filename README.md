@@ -40,15 +40,30 @@ extra-index-urls = ["https://download.pytorch.org/whl/cu118"]
 ```
 
 ## Run the code
-  
-  - All code is currently launched through `python3 main.py`. Check hydra documentation (https://hydra.cc/) for overriding default parameters.
-  - To run the debugging code: `python3 main.py +experiment=debug.yaml`. We advise to try to run the debug mode first
-    before launching full experiments.
-  - To run a code on only a few batches: `python3 main.py general.name=test`.
-  - To run the continuous model: `python3 main.py model=continuous`
-  - To run the discrete model: `python3 main.py`
-  - You can specify the dataset with `python3 main.py dataset=guacamol`. Look at `configs/dataset` for the list
-of datasets that are currently available
+
+All commands are run from the project root using `pixi run`. Check [hydra documentation](https://hydra.cc/) for overriding default parameters.
+
+  - To run the debugging code (recommended first): `pixi run python src/main.py +experiment=debug.yaml`
+  - To run on only a few batches: `pixi run python src/main.py general.name=test`
+  - To run the discrete model (default): `pixi run python src/main.py`
+  - To run the continuous model: `pixi run python src/main.py model=continuous`
+  - To specify a dataset: `pixi run python src/main.py dataset=guacamol` — see `configs/dataset/` for available datasets
+
+**Important:** The graph benchmark datasets (planar, sbm, comm20) require a matching `+experiment=` flag to load dataset-specific hyperparameters (batch size, model dimensions, etc.). Without it the default `batch_size=512` will cause an out-of-memory error on the edge feature tensors:
+
+  ```bash
+  pixi run python src/main.py dataset=planar  +experiment=planar   # planar graphs
+  pixi run python src/main.py dataset=sbm     +experiment=sbm      # stochastic block model
+  pixi run python src/main.py dataset=comm20  +experiment=comm20   # 20-community graphs
+  ```
+
+A `train` task shortcut is also defined in `pixi.toml`:
+
+  ```bash
+  pixi run train                        # discrete model (default: QM9)
+  pixi run train model=continuous       # continuous model
+  pixi run train dataset=guacamol       # different dataset
+  ```
     
 ## Checkpoints
 
