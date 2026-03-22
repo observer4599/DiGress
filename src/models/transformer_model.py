@@ -1,10 +1,20 @@
+"""Graph transformer architecture for joint node, edge, and global feature denoising.
+
+Implements the denoising network used in DiGress (Vignac et al., 2022), a
+graph diffusion model that jointly updates three feature types at each layer:
+node features X, edge features E, and a graph-level feature vector y.
+
+The main entry point is GraphTransformer, which stacks XEyTransformerLayers.
+Each layer contains a NodeEdgeBlock (edge-biased multi-head self-attention
+with FiLM conditioning from y) followed by per-feature-type feed-forward
+networks and residual connections.
+"""
+
 import math
 
 import torch
 import torch.nn as nn
-from torch.nn.modules.dropout import Dropout
-from torch.nn.modules.linear import Linear
-from torch.nn.modules.normalization import LayerNorm
+from torch.nn import Dropout, Linear, LayerNorm
 from torch.nn import functional as F
 from torch import Tensor
 
@@ -14,15 +24,28 @@ from src.models.layers import Xtoy, Etoy, masked_softmax
 
 
 class XEyTransformerLayer(nn.Module):
-    """ Transformer that updates node, edge and global features
-        d_x: node features
-        d_e: edge features
-        dz : global features
-        n_head: the number of heads in the multi_head_attention
-        dim_feedforward: the dimension of the feedforward network model after self-attention
-        dropout: dropout probablility. 0 to disable
-        layer_norm_eps: eps value in layer normalizations.
+    """Single transformer layer that jointly updates node, edge, and global features.
+
+    Wraps a NodeEdgeBlock (the attention sub-layer) with residual connections,
+    layer normalisation, and independent feed-forward networks for each of the
+    three feature types: node features X, edge features E, and graph-level
+    features y. The structure follows the Pre-LN transformer variant applied
+    simultaneously to all three feature spaces.
+
+    Args:
+        dx: Dimensionality of node features.
+        de: Dimensionality of edge features.
+        dy: Dimensionality of graph-level (global) features.
+        n_head: Number of attention heads. Must divide dx evenly.
+        dim_ffX: Hidden width of the feed-forward network for X.
+        dim_ffE: Hidden width of the feed-forward network for E.
+        dim_ffy: Hidden width of the feed-forward network for y.
+        dropout: Dropout probability applied after each sub-layer. 0 disables.
+        layer_norm_eps: Epsilon for numerical stability in LayerNorm.
+        device: Torch device for all parameters.
+        dtype: Dtype for all parameters.
     """
+
     def __init__(self, dx: int, de: int, dy: int, n_head: int, dim_ffX: int = 2048,
                  dim_ffE: int = 128, dim_ffy: int = 2048, dropout: float = 0.1,
                  layer_norm_eps: float = 1e-5, device=None, dtype=None) -> None:
@@ -57,13 +80,24 @@ class XEyTransformerLayer(nn.Module):
 
         self.activation = F.relu
 
-    def forward(self, X: Tensor, E: Tensor, y, node_mask: Tensor):
-        """ Pass the input through the encoder layer.
-            X: (bs, n, d)
-            E: (bs, n, n, d)
-            y: (bs, dy)
-            node_mask: (bs, n) Mask for the src keys per batch (optional)
-            Output: newX, newE, new_y with the same shape.
+    def forward(self, X: Tensor, E: Tensor, y: Tensor, node_mask: Tensor) -> tuple[Tensor, Tensor, Tensor]:
+        """Apply one transformer layer to node, edge, and global features.
+
+        Runs NodeEdgeBlock then applies residual + LayerNorm + feed-forward
+        independently for each of X, E, and y, matching the standard
+        transformer post-attention pattern applied to all three feature spaces.
+
+        Args:
+            X: Node feature matrix of shape (bs, n, dx).
+            E: Edge feature tensor of shape (bs, n, n, de). Expected to be
+                symmetric (undirected graph) with zeroed self-loops.
+            y: Graph-level feature vectors of shape (bs, dy).
+            node_mask: Boolean mask of shape (bs, n) where True indicates a
+                real node. Padding nodes are zeroed out throughout.
+
+        Returns:
+            Tuple (X, E, y) with the same shapes as the inputs, representing
+            the updated node, edge, and global features.
         """
 
         newX, newE, new_y = self.self_attn(X, E, y, node_mask=node_mask)
@@ -93,8 +127,33 @@ class XEyTransformerLayer(nn.Module):
 
 
 class NodeEdgeBlock(nn.Module):
-    """ Self attention layer that also updates the representations on the edges. """
-    def __init__(self, dx, de, dy, n_head, **kwargs):
+    """Edge-biased multi-head self-attention with FiLM conditioning from global features.
+
+    Implements the attention sub-layer at the core of each XEyTransformerLayer.
+    The mechanism has three distinct outputs:
+
+    - **newX**: Updated node features. Attention scores are biased by edge
+      features E via FiLM (multiplicative + additive), then FiLM-conditioned
+      again by y before the final linear projection.
+    - **newE**: Updated edge features. Derived from the raw (pre-softmax) QK
+      attention scores for each (i, j) pair, then FiLM-conditioned by y.
+    - **new_y**: Updated global features. Aggregated from the current X and E
+      via Xtoy/Etoy pooling, combined with a linear projection of the current y.
+
+    FiLM conditioning (Perez et al., 2018) modulates a representation h with a
+    context vector c as: h' = (W_mul · c + 1) * h + W_add · c, keeping h
+    unchanged when the weight matrices are initialised near zero.
+
+    Args:
+        dx: Dimensionality of node features.
+        de: Dimensionality of edge features.
+        dy: Dimensionality of graph-level features.
+        n_head: Number of attention heads. Must divide dx evenly, so that each
+            head operates on df = dx // n_head dimensions.
+        **kwargs: Forwarded to all Linear layers (e.g. device, dtype).
+    """
+
+    def __init__(self, dx: int, de: int, dy: int, n_head: int, **kwargs) -> None:
         super().__init__()
         assert dx % n_head == 0, f"dx: {dx} -- nhead: {n_head}"
         self.dx = dx
@@ -130,13 +189,36 @@ class NodeEdgeBlock(nn.Module):
         self.e_out = Linear(dx, de)
         self.y_out = nn.Sequential(nn.Linear(dy, dy), nn.ReLU(), nn.Linear(dy, dy))
 
-    def forward(self, X, E, y, node_mask):
-        """
-        :param X: bs, n, d        node features
-        :param E: bs, n, n, d     edge features
-        :param y: bs, dz           global features
-        :param node_mask: bs, n
-        :return: newX, newE, new_y with the same shape.
+    def forward(self, X: Tensor, E: Tensor, y: Tensor, node_mask: Tensor) -> tuple[Tensor, Tensor, Tensor]:
+        """Compute edge-biased attention and update all three feature types.
+
+        The computation proceeds in five stages:
+
+        1. **QK scores**: Queries and keys are projected from X and multiplied
+           per head, giving raw attention logits Y of shape (bs, n, n, n_head, df).
+        2. **Edge-biased attention**: E is projected to FiLM parameters that
+           multiplicatively and additively modulate Y:
+               Y = Y * (E_mul + 1) + E_add
+           where E_mul, E_add ∈ R^{n×n×n_head×df}. This injects edge structure
+           directly into the attention scores.
+        3. **newE**: Y is flattened to (bs, n, n, dx) and FiLM-conditioned by y
+           to produce the updated edge representation, projected to de dims.
+        4. **newX**: Softmax is applied to the (masked) Y logits, values V are
+           computed from X, and the weighted sum is FiLM-conditioned by y.
+        5. **new_y**: Updated from a linear projection of the current y plus
+           graph-level pooling of X (via Xtoy) and E (via Etoy).
+
+        Args:
+            X: Node feature matrix of shape (bs, n, dx).
+            E: Edge feature tensor of shape (bs, n, n, de). Padding edges
+                (where either endpoint is masked) are zeroed out.
+            y: Graph-level feature vectors of shape (bs, dy).
+            node_mask: Boolean mask of shape (bs, n). False positions are
+                padding nodes and receive zero output.
+
+        Returns:
+            Tuple (newX, newE, new_y) with shapes (bs, n, dx), (bs, n, n, de),
+            and (bs, dy) respectively.
         """
         bs, n, _ = X.shape
         x_mask = node_mask.unsqueeze(-1)        # bs, n, 1
@@ -203,7 +285,7 @@ class NodeEdgeBlock(nn.Module):
         newX = self.x_out(newX) * x_mask
         diffusion_utils.assert_correctly_masked(newX, x_mask)
 
-        # Process y based on X axnd E
+        # Process y based on X and E
         y = self.y_y(y)
         e_y = self.e_y(E)
         x_y = self.x_y(X)
@@ -214,10 +296,38 @@ class NodeEdgeBlock(nn.Module):
 
 
 class GraphTransformer(nn.Module):
+    """Full graph transformer denoising network for node, edge, and global features.
+
+    Serves as the score/noise-prediction network in the DiGress diffusion model
+    (Vignac et al., 2022). Given a noisy graph (X_t, E_t, y_t) at diffusion
+    step t, the model predicts the original clean graph components.
+
+    The architecture has three stages:
+
+    1. **Input projection**: Three separate MLPs map X, E, and y from their
+       input dimensionalities to a shared hidden space (hidden_dims).
+    2. **Transformer layers**: A stack of n_layers XEyTransformerLayers, each
+       jointly updating all three feature types via edge-biased attention.
+    3. **Output projection**: Three separate MLPs map back to output dims.
+
+    Skip connections from the original inputs are added before the final
+    output. E is symmetrised (averaged with its transpose) after projection
+    to enforce the undirected-graph invariant; self-loops are zeroed out.
+
+    Args:
+        n_layers: Number of XEyTransformerLayer blocks to stack.
+        input_dims: Dict with keys 'X', 'E', 'y' giving the input feature
+            dimensionality for each type.
+        hidden_mlp_dims: Dict with keys 'X', 'E', 'y' giving the hidden
+            width of the input/output MLP projections.
+        hidden_dims: Dict with keys 'dx', 'de', 'dy', 'n_head', 'dim_ffX',
+            'dim_ffE' specifying the internal transformer dimensions.
+        output_dims: Dict with keys 'X', 'E', 'y' giving the output feature
+            dimensionality for each type.
+        act_fn_in: Activation module applied inside the input-projection MLPs.
+        act_fn_out: Activation module applied inside the output-projection MLPs.
     """
-    n_layers : int -- number of layers
-    dims : dict -- contains dimensions for each feature type
-    """
+
     def __init__(self, n_layers: int, input_dims: dict, hidden_mlp_dims: dict, hidden_dims: dict,
                  output_dims: dict, act_fn_in: nn.ReLU(), act_fn_out: nn.ReLU()):
         super().__init__()
@@ -241,7 +351,7 @@ class GraphTransformer(nn.Module):
                                                             n_head=hidden_dims['n_head'],
                                                             dim_ffX=hidden_dims['dim_ffX'],
                                                             dim_ffE=hidden_dims['dim_ffE'])
-                                        for i in range(n_layers)])
+                                        for _ in range(n_layers)])
 
         self.mlp_out_X = nn.Sequential(nn.Linear(hidden_dims['dx'], hidden_mlp_dims['X']), act_fn_out,
                                        nn.Linear(hidden_mlp_dims['X'], output_dims['X']))
@@ -252,7 +362,26 @@ class GraphTransformer(nn.Module):
         self.mlp_out_y = nn.Sequential(nn.Linear(hidden_dims['dy'], hidden_mlp_dims['y']), act_fn_out,
                                        nn.Linear(hidden_mlp_dims['y'], output_dims['y']))
 
-    def forward(self, X, E, y, node_mask):
+    def forward(self, X: Tensor, E: Tensor, y: Tensor, node_mask: Tensor) -> utils.PlaceHolder:
+        """Denoise a batched graph by predicting clean node, edge, and global features.
+
+        Applies input projection, all transformer layers, output projection,
+        and skip connections. The final edge tensor is symmetrised and has its
+        diagonal (self-loops) zeroed out to maintain the undirected-graph
+        invariant expected by the diffusion model.
+
+        Args:
+            X: Noisy node features of shape (bs, n, input_dims['X']).
+            E: Noisy edge features of shape (bs, n, n, input_dims['E']).
+                Should already be symmetric with zeroed diagonal.
+            y: Noisy graph-level features of shape (bs, input_dims['y']).
+            node_mask: Boolean mask of shape (bs, n). False marks padding nodes
+                that should not influence the output.
+
+        Returns:
+            A PlaceHolder with fields X (bs, n, out_dim_X), E (bs, n, n, out_dim_E),
+            and y (bs, out_dim_y), masked so padding positions are zero.
+        """
         bs, n = X.shape[0], X.shape[1]
 
         diag_mask = torch.eye(n)
