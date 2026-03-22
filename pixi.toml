@@ -31,6 +31,7 @@ torch_geometric = "==2.7.0"
 torchmetrics = "==1.9.0"
 tensorboard = "==2.20.0"
 digress = { path = ".", editable = true }
+pytest = "==8.3.5"
 
 [environments]
 default = { solve-group = "default" }
