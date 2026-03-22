@@ -1,3 +1,16 @@
+"""Discrete denoising diffusion probabilistic model for graph generation.
+
+Implements the DiGress model (Vignac et al., 2022) — a discrete DDPM that
+operates on categorical node and edge features of molecular graphs. Noise is
+applied via Markov transition matrices Q_t rather than Gaussian perturbations,
+and the denoising network is a graph transformer trained to predict x_0 from
+a noisy graph z_t.
+
+This module defines :class:`DiscreteDenoisingDiffusion`, the central
+PyTorch Lightning module used for training, validation, testing, and
+unconditional graph sampling.
+"""
+
 import os
 import time
 
@@ -19,6 +32,35 @@ from src.diffusion import diffusion_utils
 
 
 class DiscreteDenoisingDiffusion(pl.LightningModule):
+    """Discrete denoising diffusion model for graph generation (DiGress).
+
+    Implements the full training, evaluation, and sampling pipeline from
+    Vignac et al. (2022) "DiGress: Discrete Denoising diffusion for graph
+    generation". A graph transformer denoises noisy graphs z_t back to
+    clean graphs x_0 by learning the reverse of a discrete Markov process
+    defined by transition matrices Q_t.
+
+    The ELBO loss decomposes into:
+      - KL prior: KL(q(z_T | x) || p(z_T)) — should be near zero
+      - Diffusion loss L_t: sum of KL terms at intermediate timesteps
+      - Reconstruction loss L_0: -log p(x | z_0)
+      - Node count log-probability: -log p(N)
+
+    Attributes:
+        T: Total number of diffusion timesteps.
+        Xdim: Input node feature dimension.
+        Edim: Input edge feature dimension.
+        ydim: Input global feature (conditioning) dimension.
+        Xdim_output: Output/predicted node feature dimension.
+        Edim_output: Output/predicted edge feature dimension.
+        ydim_output: Output/predicted global feature dimension.
+        model: The underlying GraphTransformer denoising network.
+        noise_schedule: Maps timestep t to noise level β_t and ᾱ_t.
+        transition_model: Builds transition matrices Q_t, Q̄_t from noise levels.
+        limit_dist: Stationary distribution p(z_T) that the noisy graph converges to.
+        best_val_nll: Tracks the best validation NLL seen so far.
+    """
+
     def __init__(
         self,
         cfg,
@@ -28,7 +70,26 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
         visualization_tools,
         extra_features,
         domain_features,
-    ):
+    ) -> None:
+        """Initialize the model, noise schedule, transition model, and metrics.
+
+        Args:
+            cfg: Hydra config object. Reads ``cfg.model``, ``cfg.train``, and
+                ``cfg.general`` sub-configs.
+            dataset_infos: Dataset metadata object exposing ``input_dims``,
+                ``output_dims``, ``nodes_dist``, ``node_types``, and
+                ``edge_types``.
+            train_metrics: Metric aggregator called each training step to track
+                per-class accuracy.
+            sampling_metrics: Metrics evaluated on sampled molecules (e.g.
+                validity, uniqueness) — called at the end of validation and test.
+            visualization_tools: Optional tool for saving chain and molecule
+                visualizations to disk. Pass ``None`` to skip visualization.
+            extra_features: Callable that computes structural graph features
+                (e.g. cycle counts, eigenvalues) appended to the network input.
+            domain_features: Callable that computes domain-specific features
+                (e.g. molecular fingerprints) appended to the network input.
+        """
         super().__init__()
 
         input_dims = dataset_infos.input_dims
@@ -124,7 +185,18 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
         self.best_val_nll = 1e8
         self.val_counter = 0
 
-    def training_step(self, data, i):
+    def training_step(self, data, i) -> dict[str, torch.Tensor] | None:
+        """Run one training step: add noise, denoise, compute cross-entropy loss.
+
+        Args:
+            data: PyG ``Data`` batch with ``x``, ``edge_index``, ``edge_attr``,
+                ``y``, and ``batch`` attributes.
+            i: Global step index used to decide whether to log this step.
+
+        Returns:
+            Dict with key ``"loss"`` containing the scalar training loss, or
+            ``None`` if the batch had no edges and was skipped.
+        """
         if data.edge_index.numel() == 0:
             self.print("Found a batch with no edges. Skipping.")
             return
@@ -156,7 +228,8 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
 
         return {"loss": loss}
 
-    def configure_optimizers(self):
+    def configure_optimizers(self) -> torch.optim.AdamW:
+        """Create the AdamW optimizer with AMSGrad and weight decay from config."""
         return torch.optim.AdamW(
             self.parameters(),
             lr=self.cfg.train.lr,
@@ -165,16 +238,19 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
         )
 
     def on_fit_start(self) -> None:
+        """Cache the number of training iterations and log input dimensions."""
         self.train_iterations = len(self.trainer.datamodule.train_dataloader())
         self.print("Size of the input features", self.Xdim, self.Edim, self.ydim)
 
     def on_train_epoch_start(self) -> None:
+        """Reset per-epoch loss and metric accumulators and start the epoch timer."""
         self.print("Starting train epoch...")
         self.start_epoch_time = time.time()
         self.train_loss.reset()
         self.train_metrics.reset()
 
     def on_train_epoch_end(self) -> None:
+        """Log epoch-level cross-entropy losses, atom/bond accuracy, and GPU memory."""
         to_log = self.train_loss.log_epoch_metrics()
         self.print(
             f"Epoch {self.current_epoch}: X_CE: {to_log['train_epoch/x_CE']:.3f}"
@@ -192,6 +268,7 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
             print("CUDA is not available. Skipping memory summary.")
 
     def on_validation_epoch_start(self) -> None:
+        """Reset all validation metric accumulators before the epoch begins."""
         self.val_nll.reset()
         self.val_X_kl.reset()
         self.val_E_kl.reset()
@@ -199,7 +276,16 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
         self.val_E_logp.reset()
         self.sampling_metrics.reset()
 
-    def validation_step(self, data, i):
+    def validation_step(self, data, i) -> dict[str, torch.Tensor]:
+        """Compute the ELBO estimate for one validation batch.
+
+        Args:
+            data: PyG ``Data`` batch.
+            i: Batch index within the epoch (unused, kept for Lightning API).
+
+        Returns:
+            Dict with key ``"loss"`` containing the batch-mean NLL estimate.
+        """
         dense_data, node_mask = utils.to_dense(
             data.x, data.edge_index, data.edge_attr, data.batch
         )
@@ -213,6 +299,7 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
         return {"loss": nll}
 
     def on_validation_epoch_end(self) -> None:
+        """Log aggregated val NLL and KL metrics; optionally run molecule sampling."""
         metrics = [
             self.val_nll.compute(),
             self.val_X_kl.compute() * self.T,
@@ -287,6 +374,7 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
             print("Validation epoch end ends...")
 
     def on_test_epoch_start(self) -> None:
+        """Reset all test metric accumulators before the epoch begins."""
         self.print("Starting test...")
         self.test_nll.reset()
         self.test_X_kl.reset()
@@ -294,7 +382,16 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
         self.test_X_logp.reset()
         self.test_E_logp.reset()
 
-    def test_step(self, data, i):
+    def test_step(self, data, i) -> dict[str, torch.Tensor]:
+        """Compute the ELBO estimate for one test batch.
+
+        Args:
+            data: PyG ``Data`` batch.
+            i: Batch index within the epoch (unused, kept for Lightning API).
+
+        Returns:
+            Dict with key ``"loss"`` containing the batch-mean NLL estimate.
+        """
         dense_data, node_mask = utils.to_dense(
             data.x, data.edge_index, data.edge_attr, data.batch
         )
@@ -308,7 +405,7 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
         return {"loss": nll}
 
     def on_test_epoch_end(self) -> None:
-        """Measure likelihood on a test set and compute stability metrics."""
+        """Log aggregated test NLL and KL metrics, save samples, and run sampling metrics."""
         metrics = [
             self.test_nll.compute(),
             self.test_X_kl.compute(),
@@ -340,7 +437,7 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
         chains_left_to_save = self.cfg.general.final_model_chains_to_save
 
         samples = []
-        id = 0
+        sample_id = 0
         while samples_left_to_generate > 0:
             self.print(
                 f"Samples left to generate: {samples_left_to_generate}/"
@@ -354,7 +451,7 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
             chains_save = min(chains_left_to_save, bs)
             samples.extend(
                 self.sample_batch(
-                    id,
+                    sample_id,
                     to_generate,
                     num_nodes=None,
                     save_final=to_save,
@@ -362,12 +459,12 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
                     number_chain_steps=self.number_chain_steps,
                 )
             )
-            id += to_generate
+            sample_id += to_generate
             samples_left_to_save -= to_save
             samples_left_to_generate -= to_generate
             chains_left_to_save -= chains_save
         self.print("Saving the generated graphs")
-        filename = f"generated_samples1.txt"
+        filename = "generated_samples1.txt"
         for i in range(2, 10):
             if os.path.exists(filename):
                 filename = f"generated_samples{i}.txt"
@@ -398,11 +495,28 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
         )
         self.print("Done testing.")
 
-    def kl_prior(self, X, E, node_mask):
-        """Computes the KL between q(z1 | x) and the prior p(z1) = Normal(0, 1).
+    def kl_prior(
+        self,
+        X: torch.Tensor,
+        E: torch.Tensor,
+        node_mask: torch.Tensor,
+    ) -> torch.Tensor:
+        """Compute KL(q(z_T | x) || p(z_T)) for the prior loss term.
 
-        This is essentially a lot of work for something that is in practice negligible in the loss. However, you
-        compute it so that you see it when you've made a mistake in your noise schedule.
+        This term measures how close the fully-noised distribution q(z_T | x)
+        is to the stationary/prior distribution p(z_T) (uniform or marginal).
+        In practice it is nearly zero when the noise schedule is well-calibrated,
+        but tracking it helps detect bugs in the schedule or transition matrices.
+
+        Corresponds to the KL prior term in the DiGress ELBO (Eq. 5).
+
+        Args:
+            X: Clean node feature one-hots of shape ``(bs, n, dx)``.
+            E: Clean edge feature one-hots of shape ``(bs, n, n, de)``.
+            node_mask: Boolean mask of shape ``(bs, n)`` marking valid nodes.
+
+        Returns:
+            Per-sample KL divergence of shape ``(bs,)``.
         """
         # Compute the last alpha value, alpha_T.
         ones = torch.ones((X.size(0), 1), device=X.device)
@@ -443,7 +557,45 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
             kl_distance_X
         ) + diffusion_utils.sum_except_batch(kl_distance_E)
 
-    def compute_Lt(self, X, E, y, pred, noisy_data, node_mask, test):
+    def compute_Lt(
+        self,
+        X: torch.Tensor,
+        E: torch.Tensor,
+        y: torch.Tensor,
+        pred,
+        noisy_data: dict[str, torch.Tensor],
+        node_mask: torch.Tensor,
+        test: bool,
+    ) -> torch.Tensor:
+        """Compute the diffusion loss L_t — the KL between posterior distributions.
+
+        For each sample in the batch, computes the KL divergence between the
+        true denoising posterior q(z_s | z_t, x_0) and the predicted posterior
+        p_θ(z_s | z_t), where s = t − 1. Scaled by T to match the ELBO
+        (Vignac et al., 2022, Eq. 5).
+
+        The posterior q(z_s | z_t, x_0) is computed analytically via Bayes'
+        rule using the transition matrices Qt, Qsb, and Qtb. The model-predicted
+        posterior uses softmax(pred) in place of x_0.
+
+        Also accumulates per-class KL metrics into the appropriate
+        ``val_X_kl``/``test_X_kl`` and ``val_E_kl``/``test_E_kl`` accumulators.
+
+        Args:
+            X: Clean node feature one-hots of shape ``(bs, n, dx)``.
+            E: Clean edge feature one-hots of shape ``(bs, n, n, de)``.
+            y: Clean global features of shape ``(bs, dy)``.
+            pred: PlaceHolder with logit tensors ``pred.X`` ``(bs, n, dx)``,
+                ``pred.E`` ``(bs, n, n, de)``, ``pred.y`` ``(bs, dy)``.
+            noisy_data: Dict produced by :meth:`apply_noise` containing
+                ``"X_t"``, ``"E_t"``, ``"y_t"``, ``"alpha_t_bar"``,
+                ``"alpha_s_bar"``, and ``"beta_t"``.
+            node_mask: Boolean mask of shape ``(bs, n)``.
+            test: If ``True``, accumulates into test metrics; otherwise val.
+
+        Returns:
+            Per-sample diffusion loss of shape ``(bs,)``, scaled by T.
+        """
         pred_probs_X = F.softmax(pred.X, dim=-1)
         pred_probs_E = F.softmax(pred.E, dim=-1)
         pred_probs_y = F.softmax(pred.y, dim=-1)
@@ -497,7 +649,35 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
         )
         return self.T * (kl_x + kl_e)
 
-    def reconstruction_logp(self, t, X, E, node_mask):
+    def reconstruction_logp(
+        self,
+        t: torch.Tensor,
+        X: torch.Tensor,
+        E: torch.Tensor,
+        node_mask: torch.Tensor,
+    ):
+        """Compute the reconstruction log-probability log p_θ(x | z_0).
+
+        Evaluates the L_0 term of the ELBO by: (1) sampling a slightly noisy
+        z_0 from the one-step transition distribution q(z_0 | x_0) using β_0;
+        (2) running the denoising network on z_0 at t=0; (3) returning the
+        predicted probability distributions over x_0.
+
+        The caller computes the actual log-likelihood as X * log(probX0),
+        summed over nodes and classes.
+
+        Args:
+            t: Normalized timestep tensor of shape ``(bs, 1)``. Used only to
+                derive β_0 via the noise schedule at t=0.
+            X: Clean node feature one-hots of shape ``(bs, n, dx)``.
+            E: Clean edge feature one-hots of shape ``(bs, n, n, de)``.
+            node_mask: Boolean mask of shape ``(bs, n)``.
+
+        Returns:
+            PlaceHolder with fields ``X`` ``(bs, n, dx_out)``, ``E``
+            ``(bs, n, n, de_out)``, and ``y`` containing the predicted
+            probability distributions (after softmax) for each type.
+        """
         # Compute noise values for t = 0.
         t_zeros = torch.zeros_like(t)
         beta_0 = self.noise_schedule(t_zeros)
@@ -545,8 +725,37 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
 
         return utils.PlaceHolder(X=probX0, E=probE0, y=proby0)
 
-    def apply_noise(self, X, E, y, node_mask):
-        """Sample noise and apply it to the data."""
+    def apply_noise(
+        self,
+        X: torch.Tensor,
+        E: torch.Tensor,
+        y: torch.Tensor,
+        node_mask: torch.Tensor,
+    ) -> dict[str, torch.Tensor]:
+        """Sample a random timestep and corrupt the graph via the forward process.
+
+        Implements q(z_t | x_0) by: (1) sampling a uniform random timestep t;
+        (2) computing the cumulative transition matrix Q̄_t = Q_1 · Q_2 · … · Q_t;
+        (3) computing per-node and per-edge transition probabilities X @ Q̄_t
+        and E @ Q̄_t; (4) sampling discrete noisy features z_t from those
+        distributions.
+
+        During training, t is sampled from {0, …, T}; during evaluation, t
+        is sampled from {1, …, T} because L_0 is computed separately in
+        :meth:`reconstruction_logp`.
+
+        Args:
+            X: Clean node feature one-hots of shape ``(bs, n, dx)``.
+            E: Clean edge feature one-hots of shape ``(bs, n, n, de)``.
+            y: Global/conditioning features of shape ``(bs, dy)``.
+            node_mask: Boolean mask of shape ``(bs, n)``.
+
+        Returns:
+            Dict with keys: ``"t_int"`` (integer timestep), ``"t"`` (normalized
+            float timestep), ``"beta_t"``, ``"alpha_s_bar"``, ``"alpha_t_bar"``
+            (noise schedule values), ``"X_t"``, ``"E_t"``, ``"y_t"`` (noisy
+            graph features), and ``"node_mask"``.
+        """
 
         # Sample a timestep t.
         # When evaluating, the loss for t=0 is computed separately
@@ -597,13 +806,40 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
         }
         return noisy_data
 
-    def compute_val_loss(self, pred, noisy_data, X, E, y, node_mask, test=False):
-        """Computes an estimator for the variational lower bound.
-        pred: (batch_size, n, total_features)
-        noisy_data: dict
-        X, E, y : (bs, n, dx),  (bs, n, n, de), (bs, dy)
-        node_mask : (bs, n)
-        Output: nll (size 1)
+    def compute_val_loss(
+        self,
+        pred,
+        noisy_data: dict[str, torch.Tensor],
+        X: torch.Tensor,
+        E: torch.Tensor,
+        y: torch.Tensor,
+        node_mask: torch.Tensor,
+        test: bool = False,
+    ) -> torch.Tensor:
+        """Compute the ELBO estimate (negative log-likelihood lower bound).
+
+        Assembles four terms that together estimate -log p(x):
+
+        1. ``-log p(N)``: negative log-probability of the node count.
+        2. ``KL prior``: KL(q(z_T | x) || p(z_T)), near zero for a good schedule.
+        3. ``L_t``: sum of KL divergences over intermediate denoising steps.
+        4. ``L_0``: reconstruction term -log p(x | z_0).
+
+        NLL = -log_pN + kl_prior + L_t - L_0
+
+        All four terms and the batch NLL are logged via ``self.log_dict``.
+
+        Args:
+            pred: PlaceHolder with logit tensors from the denoising network.
+            noisy_data: Dict produced by :meth:`apply_noise`.
+            X: Clean node feature one-hots of shape ``(bs, n, dx)``.
+            E: Clean edge feature one-hots of shape ``(bs, n, n, de)``.
+            y: Global features of shape ``(bs, dy)``.
+            node_mask: Boolean mask of shape ``(bs, n)``.
+            test: If ``True``, accumulates into test NLL metric; otherwise val.
+
+        Returns:
+            Scalar batch-mean NLL estimate.
         """
         t = noisy_data["t"]
 
@@ -643,7 +879,28 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
         )
         return nll
 
-    def forward(self, noisy_data, extra_data, node_mask):
+    def forward(
+        self,
+        noisy_data: dict[str, torch.Tensor],
+        extra_data,
+        node_mask: torch.Tensor,
+    ):
+        """Run the denoising network on a noisy graph.
+
+        Concatenates the noisy graph features with extra structural and domain
+        features before passing them to the GraphTransformer.
+
+        Args:
+            noisy_data: Dict containing ``"X_t"`` ``(bs, n, dx)``, ``"E_t"``
+                ``(bs, n, n, de)``, and ``"y_t"`` ``(bs, dy)``.
+            extra_data: PlaceHolder with fields ``X``, ``E``, ``y`` containing
+                the extra features computed by :meth:`compute_extra_data`.
+            node_mask: Boolean mask of shape ``(bs, n)``.
+
+        Returns:
+            PlaceHolder with predicted logits ``X`` ``(bs, n, dx_out)``,
+            ``E`` ``(bs, n, n, de_out)``, and ``y`` ``(bs, dy_out)``.
+        """
         X = torch.cat((noisy_data["X_t"], extra_data.X), dim=2).float()
         E = torch.cat((noisy_data["E_t"], extra_data.E), dim=3).float()
         y = torch.hstack((noisy_data["y_t"], extra_data.y)).float()
@@ -657,20 +914,35 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
         keep_chain: int,
         number_chain_steps: int,
         save_final: int,
-        num_nodes=None,
-    ):
-        """
-        :param batch_id: int
-        :param batch_size: int
-        :param num_nodes: int, <int>tensor (batch_size) (optional) for specifying number of nodes
-        :param save_final: int: number of predictions to save to file
-        :param keep_chain: int: number of chains to save to file
-        :param keep_chain_steps: number of timesteps to save for each chain
-        :return: molecule_list. Each element of this list is a tuple (atom_types, charges, positions)
+        num_nodes: int | torch.Tensor | None = None,
+    ) -> list:
+        """Sample a batch of graphs by iterating the reverse diffusion process.
+
+        Starts from noise z_T ~ p(z_T) and iteratively samples
+        z_{T-1}, z_{T-2}, …, z_0 using :meth:`sample_p_zs_given_zt`.
+        Optionally records intermediate chain states and visualizes them.
+
+        Args:
+            batch_id: Identifier for this batch, used in visualization file paths.
+            batch_size: Number of graphs to generate simultaneously.
+            keep_chain: Number of graphs (≤ batch_size) for which the full
+                denoising chain is recorded and saved.
+            number_chain_steps: How many evenly-spaced chain frames to record
+                out of the T total steps. Must be less than T.
+            save_final: Number of final graphs to pass to the visualization tool.
+            num_nodes: Controls the size of generated graphs. If ``None``,
+                samples node counts from the learned distribution. If an ``int``,
+                all graphs have that many nodes. If a ``Tensor`` of shape
+                ``(batch_size,)``, each graph gets the specified count.
+
+        Returns:
+            List of ``batch_size`` elements, each a list ``[atom_types, edge_types]``
+            where ``atom_types`` has shape ``(n,)`` and ``edge_types`` has shape
+            ``(n, n)`` with integer class indices (CPU tensors).
         """
         if num_nodes is None:
             n_nodes = self.node_dist.sample_n(batch_size, self.device)
-        elif type(num_nodes) == int:
+        elif isinstance(num_nodes, int):
             n_nodes = num_nodes * torch.ones(
                 batch_size, device=self.device, dtype=torch.int
             )
@@ -784,9 +1056,40 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
 
         return molecule_list
 
-    def sample_p_zs_given_zt(self, s, t, X_t, E_t, y_t, node_mask):
-        """Samples from zs ~ p(zs | zt). Only used during sampling.
-        if last_step, return the graph prediction as well"""
+    def sample_p_zs_given_zt(
+        self,
+        s: torch.Tensor,
+        t: torch.Tensor,
+        X_t: torch.Tensor,
+        E_t: torch.Tensor,
+        y_t: torch.Tensor,
+        node_mask: torch.Tensor,
+    ) -> tuple:
+        """Sample z_s ~ p_θ(z_s | z_t) for one reverse-diffusion step.
+
+        Implements the reverse step from Vignac et al. (2022), Eq. 3. The
+        denoising network predicts x_0 from z_t; the predicted x_0 is then
+        used to compute the posterior p(z_s | z_t, x̂_0) analytically via:
+
+            p(z_s | z_t) = Σ_{x_0} p(x_0 | z_t) · q(z_s | z_t, x_0)
+
+        where q(z_s | z_t, x_0) is computed using the batched-over-x_0
+        posterior utility. The final z_s is sampled from these probabilities.
+
+        Args:
+            s: Normalized previous timestep of shape ``(bs, 1)``, i.e. (t-1)/T.
+            t: Normalized current timestep of shape ``(bs, 1)``, i.e. t/T.
+            X_t: Noisy node features at time t of shape ``(bs, n, dx)``.
+            E_t: Noisy edge features at time t of shape ``(bs, n, n, de)``.
+            y_t: Noisy global features at time t of shape ``(bs, dy)``.
+            node_mask: Boolean mask of shape ``(bs, n)``.
+
+        Returns:
+            Tuple ``(out_one_hot, out_discrete)`` where both are PlaceHolders
+            with fields ``X`` ``(bs, n, dx_out)`` and ``E`` ``(bs, n, n, de_out)``.
+            ``out_one_hot`` contains float one-hot representations; ``out_discrete``
+            contains collapsed integer class indices (via ``mask(collapse=True)``).
+        """
         bs, n, dxs = X_t.shape
         beta_t = self.noise_schedule(t_normalized=t)  # (bs, 1)
         alpha_s_bar = self.noise_schedule.get_alpha_bar(t_normalized=s)
@@ -860,9 +1163,24 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
             node_mask, collapse=True
         ).type_as(y_t)
 
-    def compute_extra_data(self, noisy_data):
-        """At every training step (after adding noise) and step in sampling, compute extra information and append to
-        the network input."""
+    def compute_extra_data(self, noisy_data: dict[str, torch.Tensor]):
+        """Compute extra structural and domain features and append the timestep.
+
+        Called at every training step (after adding noise) and at every reverse
+        step during sampling. The resulting features are concatenated to the
+        noisy graph before being fed to the denoising transformer.
+
+        The normalized timestep ``t`` is appended to the global feature vector
+        ``y`` so the network is aware of the current noise level.
+
+        Args:
+            noisy_data: Dict containing the noisy graph features and ``"t"``
+                (normalized timestep of shape ``(bs, 1)``).
+
+        Returns:
+            PlaceHolder with fields ``X``, ``E``, ``y`` containing the
+            concatenated extra features (structural + domain + timestep).
+        """
 
         extra_features = self.extra_features(noisy_data)
         extra_molecular_features = self.domain_features(noisy_data)
