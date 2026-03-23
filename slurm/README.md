@@ -120,16 +120,24 @@ squeue --me
 
 # Stream live output (replace JOBID with the number printed by sbatch)
 tail -f logs/sbm_<JOBID>.out
+# Or for the most recent job:
+tail -f logs/$(ls -t logs/ | head -1)
 
 # Check GPU usage for a running job
 srun --jobid=<JOBID> nvidia-smi
+# Or for the most recent running job:
+srun --jobid=$(squeue --me -h -o %i | tail -1) nvidia-smi
 
 # View resource usage after a job completes
 sacct -j <JOBID> --format="JobID,JobName,Elapsed,ReqTRES%45,State"
+# Or for the most recent job:
+sacct -j $(ls -t logs/ | head -1 | grep -o '[0-9]*') --format="JobID,JobName,Elapsed,ReqTRES%45,State"
 ```
 
 ## 5. Cancel a job
 
 ```bash
 scancel <JOBID>
+# Or for the most recent running job:
+scancel $(squeue --me -h -o %i | tail -1)
 ```
