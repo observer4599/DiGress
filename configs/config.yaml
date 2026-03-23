@@ -9,7 +9,7 @@ hydra:
   job:
     chdir: True
   run:
-    dir: ../outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}-${general.name}
+    dir: outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}-${general.name}
 
 
 

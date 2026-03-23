@@ -63,7 +63,7 @@ class LiftedDenoisingDiffusion(pl.LightningModule):
         self.sampling_metrics = sampling_metrics
         self.visualization_tools = visualization_tools
 
-        self.save_hyperparameters(ignore=['train_metrics', 'sampling_metrics'])
+        self.save_hyperparameters("cfg")
         self.visualization_tools = visualization_tools
 
         self.model = GraphTransformer(n_layers=cfg.model.n_layers,
@@ -73,8 +73,6 @@ class LiftedDenoisingDiffusion(pl.LightningModule):
                                       output_dims=output_dims,
                                       act_fn_in=nn.ReLU(),
                                       act_fn_out=nn.ReLU())
-
-        self.save_hyperparameters()
 
         self.start_epoch_time = None
         self.train_iterations = None
@@ -166,7 +164,7 @@ class LiftedDenoisingDiffusion(pl.LightningModule):
                        "val/y_mse": metrics[3],
                        "val/X_logp": metrics[4],
                        "val/E_logp": metrics[5],
-                       "val/y_logp": metrics[6]})
+                       "val/y_logp": metrics[6]}, batch_size=1)
 
         print(f"Epoch {self.current_epoch}: Val NLL {metrics[0] :.2f} -- Val Atom type MSE {metrics[1] :.2f} -- ",
               f"Val Edge type MSE: {metrics[2] :.2f} -- Val Global feat. MSE {metrics[3] :.2f}",
@@ -175,8 +173,8 @@ class LiftedDenoisingDiffusion(pl.LightningModule):
 
         # Log val nll with default Lightning logger, so it can be monitored by checkpoint callback
         val_nll = metrics[0]
-        self.log("val/epoch_NLL", val_nll, sync_dist=True)
-        self.log_dict(self.log_info())
+        self.log("val/epoch_NLL", val_nll, sync_dist=True, batch_size=1)
+        self.log_dict(self.log_info(), batch_size=1)
 
         if val_nll < self.best_val_nll:
             self.best_val_nll = val_nll
@@ -244,7 +242,7 @@ class LiftedDenoisingDiffusion(pl.LightningModule):
                        "test/y_mse": metrics[3],
                        "test/X_logp": metrics[4],
                        "test/E_logp": metrics[5],
-                       "test/y_logp": metrics[6]})
+                       "test/y_logp": metrics[6]}, batch_size=1)
 
         print(f"Epoch {self.current_epoch}: Test NLL {metrics[0] :.2f} -- Test Atom type MSE {metrics[1] :.2f} -- ",
               f"Test Edge type MSE: {metrics[2] :.2f} -- Test Global feat. MSE {metrics[3] :.2f}",
@@ -252,8 +250,8 @@ class LiftedDenoisingDiffusion(pl.LightningModule):
               f"-- Test y Reconstruction loss {metrics[6] : .2f}\n")
 
         test_nll = metrics[0]
-        self.log("test/epoch_NLL", test_nll)
-        self.log_dict(self.log_info())
+        self.log("test/epoch_NLL", test_nll, batch_size=1)
+        self.log_dict(self.log_info(), batch_size=1)
 
         print(f'Test loss: {test_nll :.4f}')
 

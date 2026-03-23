@@ -7,6 +7,7 @@ import graph_tool.all as gt
 ##Navigate to the ./util/orca directory and compile orca.cpp
 # g++ -O2 -std=c++11 -o orca orca.cpp
 import os
+from loguru import logger
 import copy
 import torch
 import torch.nn as nn
@@ -750,6 +751,7 @@ class SpectreSamplingMetrics(nn.Module):
             for j, data in enumerate(data_list):
                 networkx_graphs.append(to_networkx(data, node_attrs=None, edge_attrs=None, to_undirected=True,
                                                    remove_self_loops=True))
+        logger.info("  Converted {} graphs to NetworkX", len(networkx_graphs))
         return networkx_graphs
 
     def forward(self, generated_graphs: list, name, current_epoch, val_counter, local_rank, test=False):

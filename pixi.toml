@@ -32,6 +32,7 @@ torchmetrics = "==1.9.0"
 tensorboard = "==2.20.0"
 digress = { path = ".", editable = true }
 pytest = "==8.3.5"
+loguru = "==0.7.3"
 
 [environments]
 default = { solve-group = "default" }

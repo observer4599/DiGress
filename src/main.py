@@ -3,6 +3,7 @@ import os
 import pathlib
 import warnings
 
+from loguru import logger
 import torch
 torch.cuda.empty_cache()
 import hydra
@@ -75,24 +76,29 @@ def main(cfg: DictConfig):
         from analysis.spectre_utils import PlanarSamplingMetrics, SBMSamplingMetrics, Comm20SamplingMetrics
         from analysis.visualization import NonMolecularVisualization
 
+        logger.info("Loading {} dataset...", dataset_config['name'])
         datamodule = SpectreGraphDataModule(cfg)
+        logger.info("Building sampling metrics (converting all splits to NetworkX)...")
         if dataset_config['name'] == 'sbm':
             sampling_metrics = SBMSamplingMetrics(datamodule)
         elif dataset_config['name'] == 'comm20':
             sampling_metrics = Comm20SamplingMetrics(datamodule)
         else:
             sampling_metrics = PlanarSamplingMetrics(datamodule)
+        logger.info("Sampling metrics ready.")
 
         dataset_infos = SpectreDatasetInfos(datamodule, dataset_config)
         train_metrics = TrainAbstractMetricsDiscrete() if cfg.model.type == 'discrete' else TrainAbstractMetrics()
         visualization_tools = NonMolecularVisualization()
 
         if cfg.model.type == 'discrete' and cfg.model.extra_features is not None:
+            logger.info("Computing extra features (type={})...", cfg.model.extra_features)
             extra_features = ExtraFeatures(cfg.model.extra_features, dataset_info=dataset_infos)
         else:
             extra_features = DummyExtraFeatures()
         domain_features = DummyExtraFeatures()
 
+        logger.info("Computing input/output dims...")
         dataset_infos.compute_input_output_dims(datamodule=datamodule, extra_features=extra_features,
                                                 domain_features=domain_features)
 
@@ -162,6 +168,7 @@ def main(cfg: DictConfig):
 
     utils.create_folders(cfg)
 
+    logger.info("Initialising model...")
     if cfg.model.type == 'discrete':
         model = DiscreteDenoisingDiffusion(cfg=cfg, **model_kwargs)
     else:
@@ -207,6 +214,7 @@ def main(cfg: DictConfig):
                       log_every_n_steps=50 if name != 'debug' else 1,
                       logger=loggers)
 
+    logger.info("Starting training...")
     if not cfg.general.test_only:
         trainer.fit(model, datamodule=datamodule, ckpt_path=cfg.general.resume)
         if cfg.general.name not in ['debug', 'test']:
