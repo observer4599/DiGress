@@ -18,7 +18,7 @@
 #SBATCH --output=logs/sbm_%j.out
 #SBATCH --error=logs/sbm_%j.err
 
-set -euo pipefail
+set -eo pipefail
 
 mkdir -p logs
 
