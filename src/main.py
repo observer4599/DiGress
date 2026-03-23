@@ -1,5 +1,6 @@
 import graph_tool as gt
 import os
+os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
 import pathlib
 import warnings
 
@@ -194,7 +195,17 @@ def main(cfg: DictConfig):
     if name == 'debug':
         print("[WARNING]: Run is called 'debug' -- it will run with fast_dev_run. ")
 
-    use_gpu = cfg.general.gpus > 0 and torch.cuda.is_available()
+    use_cuda = cfg.general.gpus > 0 and torch.cuda.is_available()
+    use_mps = not use_cuda and torch.backends.mps.is_available()
+    if use_cuda:
+        accelerator, devices = 'gpu', cfg.general.gpus
+        strategy = "ddp_find_unused_parameters_true"  # Needed to load old checkpoints
+    elif use_mps:
+        accelerator, devices = 'mps', 1
+        strategy = "auto"
+    else:
+        accelerator, devices = 'cpu', 1
+        strategy = "auto"
     loggers = []
     if cfg.general.wandb != 'disabled':
         loggers.append(TensorBoardLogger(
@@ -203,9 +214,9 @@ def main(cfg: DictConfig):
             version=cfg.general.name,
         ))
     trainer = Trainer(gradient_clip_val=cfg.train.clip_grad,
-                      strategy="ddp_find_unused_parameters_true",  # Needed to load old checkpoints
-                      accelerator='gpu' if use_gpu else 'cpu',
-                      devices=cfg.general.gpus if use_gpu else 1,
+                      strategy=strategy,
+                      accelerator=accelerator,
+                      devices=devices,
                       max_epochs=cfg.train.n_epochs,
                       check_val_every_n_epoch=cfg.general.check_val_every_n_epochs,
                       fast_dev_run=cfg.general.name == 'debug',

@@ -14,6 +14,7 @@ unconditional graph sampling.
 import os
 import time
 
+from loguru import logger
 import pytorch_lightning as pl
 import torch
 import torch.nn as nn
@@ -247,7 +248,7 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
 
     def on_train_epoch_start(self) -> None:
         """Reset per-epoch loss and metric accumulators and start the epoch timer."""
-        self.print("Starting train epoch...")
+        logger.info(f"Epoch {self.current_epoch + 1}/{self.trainer.max_epochs}")
         self.start_epoch_time = time.time()
         self.train_loss.reset()
         self.train_metrics.reset()
@@ -267,10 +268,6 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
         self.print(
             f"Epoch {self.current_epoch}: {epoch_at_metrics} -- {epoch_bond_metrics}"
         )
-        if torch.cuda.is_available():
-            print(torch.cuda.memory_summary())
-        else:
-            print("CUDA is not available. Skipping memory summary.")
 
     def on_validation_epoch_start(self) -> None:
         """Reset all validation metric accumulators before the epoch begins."""
@@ -327,7 +324,6 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
                 "val/X_logp": metrics[3],
                 "val/E_logp": metrics[4],
             },
-            batch_size=1,
         )
 
         self.print(
@@ -337,7 +333,7 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
 
         # Log val nll with default Lightning logger, so it can be monitored by checkpoint callback
         val_nll = metrics[0]
-        self.log("val/epoch_NLL", val_nll, sync_dist=True, batch_size=1)
+        self.log("val/epoch_NLL", val_nll, sync_dist=True)
 
         if val_nll < self.best_val_nll:
             self.best_val_nll = val_nll
@@ -355,12 +351,21 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
 
             samples = []
 
+            total_to_generate = self.cfg.general.samples_to_generate
             ident = 0
             while samples_left_to_generate > 0:
                 bs = 2 * self.cfg.train.batch_size
                 to_generate = min(samples_left_to_generate, bs)
                 to_save = min(samples_left_to_save, bs)
                 chains_save = min(chains_left_to_save, bs)
+                generated_so_far = total_to_generate - samples_left_to_generate
+                logger.info(
+                    "Sampling graphs {}-{}/{} (epoch {})...",
+                    generated_so_far + 1,
+                    generated_so_far + to_generate,
+                    total_to_generate,
+                    self.current_epoch,
+                )
                 samples.extend(
                     self.sample_batch(
                         batch_id=ident,
@@ -445,7 +450,6 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
                 "test/X_logp": metrics[3],
                 "test/E_logp": metrics[4],
             },
-            batch_size=1,
         )
 
         self.print(
@@ -454,7 +458,10 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
         )
 
         test_nll = metrics[0]
-        self.log("test/epoch_NLL", test_nll, batch_size=1)
+        self.log(
+            "test/epoch_NLL",
+            test_nll,
+        )
 
         self.print(f"Test loss: {test_nll:.4f}")
 
@@ -1020,6 +1027,7 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
         chain_E = torch.zeros(chain_E_size)
 
         # Iteratively sample p(z_s | z_t) for t = 1, ..., T, with s = t - 1.
+        log_every = max(1, self.T // 10)
         for s_int in reversed(range(0, self.T)):
             s_array = s_int * torch.ones((batch_size, 1)).type_as(y)
             t_array = s_array + 1
@@ -1032,6 +1040,9 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
             )
             X, E, y = sampled_s.X, sampled_s.E, sampled_s.y
 
+            if s_int % log_every == 0:
+                step = self.T - s_int
+                logger.info("  Denoising step {}/{}", step, self.T)
             # Save the first keep_chain graphs
             write_index = (s_int * number_chain_steps) // self.T
             chain_X[write_index] = discrete_sampled_s.X[:keep_chain]

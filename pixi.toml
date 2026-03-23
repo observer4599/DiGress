@@ -33,6 +33,7 @@ tensorboard = "==2.20.0"
 digress = { path = ".", editable = true }
 pytest = "==8.3.5"
 loguru = "==0.7.3"
+moviepy = "==1.0.3"
 
 [environments]
 default = { solve-group = "default" }
