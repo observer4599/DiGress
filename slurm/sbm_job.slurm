@@ -27,7 +27,7 @@ echo "Node: $SLURMD_NODENAME"
 nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
 
 # Ensure pixi (installed in home directory) is on PATH
-source "$HOME/.bashrc"
+export PATH="$HOME/.pixi/bin:$PATH"
 
 # $SLURM_SUBMIT_DIR is the directory from which sbatch was called
 cd "$SLURM_SUBMIT_DIR"
