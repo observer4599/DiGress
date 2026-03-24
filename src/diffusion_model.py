@@ -7,8 +7,8 @@ import torch
 import torch.nn as nn
 
 from diffusion.noise_schedule import PredefinedNoiseSchedule
+from torchmetrics import MeanMetric
 from metrics.abstract_metrics import (
-    NLL,
     SumExceptBatchMetric,
     SumExceptBatchMSE,
 )
@@ -60,7 +60,7 @@ class LiftedDenoisingDiffusion(pl.LightningModule):
 
         self.dataset_info = dataset_infos
 
-        self.val_nll = NLL()
+        self.val_nll = MeanMetric()
         self.val_X_mse = SumExceptBatchMSE()
         self.val_E_mse = SumExceptBatchMSE()
         self.val_y_mse = SumExceptBatchMSE()
@@ -68,7 +68,7 @@ class LiftedDenoisingDiffusion(pl.LightningModule):
         self.val_E_logp = SumExceptBatchMetric()
         self.val_y_logp = SumExceptBatchMSE()
 
-        self.test_nll = NLL()
+        self.test_nll = MeanMetric()
         self.test_X_mse = SumExceptBatchMSE()
         self.test_E_mse = SumExceptBatchMSE()
         self.test_y_mse = SumExceptBatchMSE()

@@ -25,7 +25,8 @@ from diffusion.noise_schedule import (
     MarginalUniformTransition,
     PredefinedNoiseScheduleDiscrete,
 )
-from metrics.abstract_metrics import NLL, SumExceptBatchKL, SumExceptBatchMetric
+from torchmetrics import MeanMetric
+from metrics.abstract_metrics import SumExceptBatchKL, SumExceptBatchMetric
 from metrics.train_metrics import TrainLossDiscrete
 from models.transformer_model import GraphTransformer
 from src import utils
@@ -114,13 +115,13 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
 
         self.train_loss = TrainLossDiscrete(self.cfg.model.lambda_train)
 
-        self.val_nll = NLL()
+        self.val_nll = MeanMetric()
         self.val_X_kl = SumExceptBatchKL()
         self.val_E_kl = SumExceptBatchKL()
         self.val_X_logp = SumExceptBatchMetric()
         self.val_E_logp = SumExceptBatchMetric()
 
-        self.test_nll = NLL()
+        self.test_nll = MeanMetric()
         self.test_X_kl = SumExceptBatchKL()
         self.test_E_kl = SumExceptBatchKL()
         self.test_X_logp = SumExceptBatchMetric()

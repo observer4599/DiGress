@@ -9,8 +9,6 @@ Test groups:
 - ``SumExceptBatchMSE``: squared error summed per element, normalised by batch rows.
 - ``SumExceptBatchKL``: KL divergence summed and normalised by batch size.
 - ``CrossEntropyMetric``: one-hot targets converted via argmax before CE loss.
-- ``ProbabilityMetric``: marginal probability averaged over *all* elements.
-- ``NLL``: per-sample NLL averaged over all values in the batch tensor.
 """
 
 import torch
@@ -20,8 +18,6 @@ from src.metrics.abstract_metrics import (
     SumExceptBatchMSE,
     SumExceptBatchKL,
     CrossEntropyMetric,
-    ProbabilityMetric,
-    NLL,
 )
 
 
@@ -83,27 +79,6 @@ def test_cross_entropy_metric_uses_argmax_on_one_hot_target() -> None:
     metric.update(preds, target)
     assert metric.compute().item() == pytest.approx(0.0, abs=1e-4)
 
-
-def test_probability_metric_averages_over_all_elements() -> None:
-    """Mean is taken over every element, not just the batch dimension.
-
-    A (3, 4) tensor of 0.5 contains 12 elements; compute() returns 0.5.
-    Distinguishes ProbabilityMetric from metrics that only divide by batch size.
-    """
-    metric = ProbabilityMetric()
-    metric.update(torch.full((3, 4), 0.5))
-    assert metric.compute().item() == pytest.approx(0.5)
-
-
-def test_nll_averages_over_all_values() -> None:
-    """Mean NLL is computed over all elements in the accumulated batch_nll tensor.
-
-    Four samples each with NLL=2.0: compute() returns 2.0.  Confirms that
-    total_nll / total_samples gives the correct per-sample average.
-    """
-    metric = NLL()
-    metric.update(torch.full((4,), 2.0))
-    assert metric.compute().item() == pytest.approx(2.0)
 
 
 def test_sum_except_batch_kl_normalises_by_batch_size() -> None:

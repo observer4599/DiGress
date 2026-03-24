@@ -4,34 +4,62 @@ This module provides two kinds of building blocks:
 
 1. **Abstract training-metric interfaces** (`TrainAbstractMetricsDiscrete`,
    `TrainAbstractMetrics`) — no-op base classes that define the interface
-   expected by the diffusion training loop.  Concrete subclasses (e.g.
+   expected by the diffusion training loop.  Both inherit from
+   `_TrainAbstractMetricsBase`, which provides default no-op `reset` and
+   `log_epoch_metrics` implementations.  Concrete subclasses (e.g.
    `TrainMolecularMetricsDiscrete`) override `forward`, `reset`, and
    `log_epoch_metrics` to track dataset-specific losses.
 
 2. **Batch-normalised torchmetrics** — `Metric` subclasses that accumulate
-   statistics across batches and return per-sample averages via `compute()`.
-   Each variant normalises by the number of *graphs* (batch dimension) rather
-   than the total number of elements, matching the loss formulation in the
-   DiGress paper (Vignac et al., 2022).
+   statistics across batches and return per-graph averages via `compute()`.
+   All four concrete metrics (`SumExceptBatchMetric`, `SumExceptBatchMSE`,
+   `SumExceptBatchKL`, `CrossEntropyMetric`) inherit from `_SumExceptBatchBase`,
+   which holds the shared state and `compute` logic.  Each subclass only
+   implements `update`.  All normalise by the number of *graphs* (first
+   dimension) rather than the total number of elements, matching the loss
+   formulation in the DiGress paper (Vignac et al., 2022).
 """
 
 import torch
 from torch import Tensor
 from torch.nn import functional as F
-from torchmetrics import Metric, MeanSquaredError
+from torchmetrics import Metric
 
 
-class TrainAbstractMetricsDiscrete(torch.nn.Module):
-    """No-op base class defining the training-metric interface for discrete diffusion.
+class _TrainAbstractMetricsBase:
+    """Shared no-op base for discrete and continuous training-metric interfaces.
 
-    Concrete subclasses should override all three methods to track
-    node- and edge-type prediction quality during discrete-time diffusion
-    training.  The default implementation is used for non-molecular datasets
-    where no additional per-epoch logging is required.
+    Provides default implementations of ``reset`` and ``log_epoch_metrics``
+    that are identical across both variants.  Concrete subclasses override
+    ``forward`` (and optionally the other methods) to add dataset-specific
+    logic.
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __call__(self, *args, **kwargs) -> None:
+        return self.forward(*args, **kwargs)
+
+    def reset(self) -> None:
+        """Reset all accumulated metric state at the start of a new epoch."""
+        pass
+
+    def log_epoch_metrics(self) -> tuple[None, None]:
+        """Return per-epoch metric summaries after all batches have been seen.
+
+        Returns:
+            A ``(None, None)`` tuple; subclasses return ``(node_metric, edge_metric)``.
+        """
+        return None, None
+
+
+class TrainAbstractMetricsDiscrete(_TrainAbstractMetricsBase):
+    """No-op base class defining the training-metric interface for discrete diffusion.
+
+    Concrete subclasses should override ``forward`` (and optionally ``reset``
+    and ``log_epoch_metrics``) to track node- and edge-type prediction quality
+    during discrete-time diffusion training.  The default implementation is
+    used for non-molecular datasets where no additional per-epoch logging is
+    required.
+    """
 
     def forward(
         self,
@@ -54,30 +82,16 @@ class TrainAbstractMetricsDiscrete(torch.nn.Module):
         """
         pass
 
-    def reset(self) -> None:
-        """Reset all accumulated metric state at the start of a new epoch."""
-        pass
 
-    def log_epoch_metrics(self) -> tuple[None, None]:
-        """Return per-epoch metric summaries after all batches have been seen.
-
-        Returns:
-            A ``(None, None)`` tuple; subclasses return ``(node_metric, edge_metric)``.
-        """
-        return None, None
-
-
-class TrainAbstractMetrics(torch.nn.Module):
+class TrainAbstractMetrics(_TrainAbstractMetricsBase):
     """No-op base class defining the training-metric interface for continuous diffusion.
 
-    Concrete subclasses should override all three methods to track the
-    quality of predicted noise (ε-prediction) for nodes, edges, and global
-    graph features during continuous-time diffusion training.  The default
-    implementation is used for non-molecular datasets.
+    Concrete subclasses should override ``forward`` (and optionally ``reset``
+    and ``log_epoch_metrics``) to track the quality of predicted noise
+    (ε-prediction) for nodes, edges, and global graph features during
+    continuous-time diffusion training.  The default implementation is used
+    for non-molecular datasets.
     """
-
-    def __init__(self) -> None:
-        super().__init__()
 
     def forward(
         self,
@@ -105,20 +119,29 @@ class TrainAbstractMetrics(torch.nn.Module):
         """
         pass
 
-    def reset(self) -> None:
-        """Reset all accumulated metric state at the start of a new epoch."""
-        pass
 
-    def log_epoch_metrics(self) -> tuple[None, None]:
-        """Return per-epoch metric summaries after all batches have been seen.
+class _SumExceptBatchBase(Metric):
+    """Base class for metrics that sum over all elements but normalise by batch size.
+
+    Subclasses implement ``update`` to accumulate ``total_value`` and
+    ``total_samples``; ``compute`` returns their ratio (per-graph average).
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.add_state("total_value", default=torch.tensor(0.0), dist_reduce_fx="sum")
+        self.add_state("total_samples", default=torch.tensor(0.0), dist_reduce_fx="sum")
+
+    def compute(self) -> Tensor:
+        """Return the accumulated sum divided by the total number of graphs.
 
         Returns:
-            A ``(None, None)`` tuple; subclasses return ``(node_metric, edge_metric)``.
+            Per-graph average.
         """
-        return None, None
+        return self.total_value / self.total_samples
 
 
-class SumExceptBatchMetric(Metric):
+class SumExceptBatchMetric(_SumExceptBatchBase):
     """Accumulates a scalar sum over all tensor elements, normalised by batch size.
 
     Divides the total accumulated value by the number of graphs (first
@@ -129,11 +152,6 @@ class SumExceptBatchMetric(Metric):
     Used in the diffusion models to track validation and test log-probabilities
     for nodes (``val_X_logp``) and edges (``val_E_logp``).
     """
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.add_state('total_value', default=torch.tensor(0.), dist_reduce_fx="sum")
-        self.add_state('total_samples', default=torch.tensor(0.), dist_reduce_fx="sum")
 
     def update(self, values: Tensor) -> None:
         """Accumulate the element-wise sum and the batch count.
@@ -146,22 +164,14 @@ class SumExceptBatchMetric(Metric):
         self.total_value += torch.sum(values)
         self.total_samples += values.shape[0]
 
-    def compute(self) -> Tensor:
-        """Return the accumulated sum divided by the total number of graphs.
 
-        Returns:
-            Per-graph average of all accumulated values.
-        """
-        return self.total_value / self.total_samples
-
-
-class SumExceptBatchMSE(MeanSquaredError):
+class SumExceptBatchMSE(_SumExceptBatchBase):
     """MSE metric that normalises by batch size rather than total element count.
 
-    Standard `MeanSquaredError` divides the squared-error sum by the total
-    number of scalar elements.  This subclass instead divides by the number
-    of rows (graphs / examples), so the result is a *per-graph* MSE.  This
-    matches the noise-prediction loss used in continuous-time DiGress.
+    Standard MSE divides the squared-error sum by the total number of scalar
+    elements.  This class instead divides by the number of rows (graphs /
+    examples), so the result is a *per-graph* MSE.  This matches the
+    noise-prediction loss used in continuous-time DiGress.
 
     Used in the diffusion model to track ``val_X_mse``, ``val_E_mse``,
     ``val_y_mse``, and their test counterparts.
@@ -173,41 +183,13 @@ class SumExceptBatchMSE(MeanSquaredError):
         Args:
             preds: Model predictions; must have the same shape as ``target``.
             target: Ground-truth values; must have the same shape as ``preds``.
-
-        Raises:
-            AssertionError: If ``preds`` and ``target`` have different shapes.
         """
         assert preds.shape == target.shape
-        sum_squared_error, n_obs = self._mean_squared_error_update(preds, target)
-
-        self.sum_squared_error += sum_squared_error
-        self.total += n_obs
-
-    def _mean_squared_error_update(
-        self, preds: Tensor, target: Tensor
-    ) -> tuple[Tensor, int]:
-        """Compute the squared-error sum and the batch row count.
-
-        Overrides the parent implementation to use ``preds.shape[0]`` (number
-        of rows) as ``n_obs`` instead of ``preds.numel()``, so that
-        ``compute()`` returns a per-graph rather than per-element average.
-
-        Args:
-            preds: Predicted tensor of shape ``(bs, ...)``.
-            target: Ground truth tensor of the same shape as ``preds``.
-
-        Returns:
-            A ``(sum_squared_error, n_obs)`` pair where ``sum_squared_error``
-            is the scalar sum of squared differences and ``n_obs`` is the
-            number of rows (batch size).
-        """
-        diff = preds - target
-        sum_squared_error = torch.sum(diff * diff)
-        n_obs = preds.shape[0]
-        return sum_squared_error, n_obs
+        self.total_value += torch.sum((preds - target) ** 2)
+        self.total_samples += preds.shape[0]
 
 
-class SumExceptBatchKL(Metric):
+class SumExceptBatchKL(_SumExceptBatchBase):
     """KL divergence metric normalised by batch size.
 
     Accumulates ``KL(p ‖ q)`` across batches and returns the per-graph
@@ -218,11 +200,6 @@ class SumExceptBatchKL(Metric):
     Used in the discrete diffusion model to track validation and test KL
     divergences for nodes (``val_X_kl``) and edges (``val_E_kl``).
     """
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.add_state('total_value', default=torch.tensor(0.), dist_reduce_fx="sum")
-        self.add_state('total_samples', default=torch.tensor(0.), dist_reduce_fx="sum")
 
     def update(self, p: Tensor, q: Tensor) -> None:
         """Accumulate the KL divergence sum and the batch count.
@@ -236,19 +213,11 @@ class SumExceptBatchKL(Metric):
             q: Predicted log-probabilities (log-space),
                 shape ``(bs, ..., d)``.
         """
-        self.total_value += F.kl_div(q, p, reduction='sum')
+        self.total_value += F.kl_div(q, p, reduction="sum")
         self.total_samples += p.size(0)
 
-    def compute(self) -> Tensor:
-        """Return the accumulated KL sum divided by the total number of graphs.
 
-        Returns:
-            Per-graph average KL divergence.
-        """
-        return self.total_value / self.total_samples
-
-
-class CrossEntropyMetric(Metric):
+class CrossEntropyMetric(_SumExceptBatchBase):
     """Cross-entropy loss metric for one-hot encoded targets, normalised by batch size.
 
     Accepts *one-hot* target tensors (as produced by the diffusion model's
@@ -259,11 +228,6 @@ class CrossEntropyMetric(Metric):
     Used in ``TrainLossDiscrete`` to track node loss, edge loss, and global
     feature loss (``node_loss``, ``edge_loss``, ``y_loss``).
     """
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.add_state('total_ce', default=torch.tensor(0.), dist_reduce_fx="sum")
-        self.add_state('total_samples', default=torch.tensor(0.), dist_reduce_fx="sum")
 
     def update(self, preds: Tensor, target: Tensor) -> None:
         """Accumulate cross-entropy loss and sample count.
@@ -276,79 +240,7 @@ class CrossEntropyMetric(Metric):
                 ``preds``.  Converted internally to class indices via
                 ``argmax`` along the last dimension.
         """
-        target = torch.argmax(target, dim=-1)
-        output = F.cross_entropy(preds, target, reduction='sum')
-        self.total_ce += output
+        self.total_value += F.cross_entropy(preds, torch.argmax(target, dim=-1), reduction="sum")
         self.total_samples += preds.size(0)
 
-    def compute(self) -> Tensor:
-        """Return the accumulated cross-entropy sum divided by the sample count.
 
-        Returns:
-            Per-sample average cross-entropy loss.
-        """
-        return self.total_ce / self.total_samples
-
-
-class ProbabilityMetric(Metric):
-    """Tracks the marginal predicted probability of a class during training.
-
-    Averages predicted probabilities across *all* elements (not just the batch
-    dimension).  Useful for monitoring whether the model is collapsing to or
-    avoiding a particular class over the course of training.
-    """
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.add_state('prob', default=torch.tensor(0.), dist_reduce_fx="sum")
-        self.add_state('total', default=torch.tensor(0.), dist_reduce_fx="sum")
-
-    def update(self, preds: Tensor) -> None:
-        """Accumulate the probability sum and element count.
-
-        Args:
-            preds: Predicted probabilities of any shape.  All elements are
-                included in the running average.
-        """
-        self.prob += preds.sum()
-        self.total += preds.numel()
-
-    def compute(self) -> Tensor:
-        """Return the mean predicted probability across all accumulated elements.
-
-        Returns:
-            Scalar mean probability.
-        """
-        return self.prob / self.total
-
-
-class NLL(Metric):
-    """Negative log-likelihood metric normalised by the number of samples.
-
-    Accumulates per-sample NLL values and returns their mean via ``compute()``.
-    Used in both the continuous and discrete diffusion models to track
-    validation and test NLL (``val_nll``, ``test_nll``).
-    """
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.add_state('total_nll', default=torch.tensor(0.), dist_reduce_fx="sum")
-        self.add_state('total_samples', default=torch.tensor(0.), dist_reduce_fx="sum")
-
-    def update(self, batch_nll: Tensor) -> None:
-        """Accumulate NLL values from a batch.
-
-        Args:
-            batch_nll: Per-sample NLL values of any shape.  All elements
-                contribute to the running mean equally.
-        """
-        self.total_nll += torch.sum(batch_nll)
-        self.total_samples += batch_nll.numel()
-
-    def compute(self) -> Tensor:
-        """Return the mean NLL across all accumulated samples.
-
-        Returns:
-            Scalar mean negative log-likelihood.
-        """
-        return self.total_nll / self.total_samples
