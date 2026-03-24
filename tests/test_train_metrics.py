@@ -26,7 +26,7 @@ def test_train_loss_discrete_forward_returns_scalar() -> None:
     true_E = torch.zeros(bs, n, n, de);  true_E[..., 0] = 1.0
     true_y = torch.zeros(bs, de);        true_y[..., 0] = 1.0
     loss = TrainLossDiscrete(lambda_train=[1.0, 1.0])
-    result = loss(pred_X, pred_E, pred_y, true_X, true_E, true_y, log=False)
+    result, _ = loss(pred_X, pred_E, pred_y, true_X, true_E, true_y, log=False)
     assert result.shape == torch.Size([])
 
 
@@ -46,10 +46,10 @@ def test_train_loss_discrete_forward_lambda_scales_edge_loss() -> None:
     true_E = torch.zeros(bs, n, n, de);  true_E[..., 0] = 1.0
     true_y = torch.zeros(bs, de);        true_y[..., 0] = 1.0
 
-    result_no_edge = TrainLossDiscrete(lambda_train=[0.0, 0.0])(
+    result_no_edge, _ = TrainLossDiscrete(lambda_train=[0.0, 0.0])(
         pred_X, pred_E, pred_y, true_X, true_E, true_y, log=False
     )
-    result_with_edge = TrainLossDiscrete(lambda_train=[1.0, 0.0])(
+    result_with_edge, _ = TrainLossDiscrete(lambda_train=[1.0, 0.0])(
         pred_X, pred_E, pred_y, true_X, true_E, true_y, log=False
     )
     assert result_with_edge.item() > result_no_edge.item()

@@ -38,7 +38,7 @@ class SamplingMolecularMetrics(nn.Module):
         self.train_smiles = train_smiles
         self.dataset_info = di
 
-    def forward(self, molecules: list, name, current_epoch, val_counter, local_rank, test=False):
+    def forward(self, molecules: list, name, current_epoch, val_counter, local_rank, test=False) -> dict[str, float]:
         stability, rdkit_metrics, all_smiles = compute_molecular_metrics(molecules, self.train_smiles, self.dataset_info)
 
         if test and local_rank == 0:
@@ -80,10 +80,19 @@ class SamplingMolecularMetrics(nn.Module):
             target_probability = self.valency_target_dist[valency]
             to_log[f'molecular_metrics/valency_{valency}_dist'] = (generated_probability - target_probability).item()
 
-        n_mae = self.n_dist_mae.compute()
-        node_mae = self.node_dist_mae.compute()
-        edge_mae = self.edge_dist_mae.compute()
-        valency_mae = self.valency_dist_mae.compute()
+        to_log['molecular_metrics/n_mae'] = self.n_dist_mae.compute()
+        to_log['molecular_metrics/node_mae'] = self.node_dist_mae.compute()
+        to_log['molecular_metrics/edge_mae'] = self.edge_dist_mae.compute()
+        to_log['molecular_metrics/valency_mae'] = self.valency_dist_mae.compute()
+
+        to_log['molecular_metrics/mol_stable'] = stability['mol_stable']
+        to_log['molecular_metrics/atm_stable'] = stability['atm_stable']
+
+        validity, relaxed_validity, uniqueness, novelty = rdkit_metrics[0]
+        to_log['molecular_metrics/validity'] = validity
+        to_log['molecular_metrics/relaxed_validity'] = relaxed_validity
+        to_log['molecular_metrics/uniqueness'] = uniqueness
+        to_log['molecular_metrics/novelty'] = novelty
 
         if local_rank == 0:
             print("Custom metrics computed.")
@@ -93,6 +102,7 @@ class SamplingMolecularMetrics(nn.Module):
             textfile.writelines(valid_unique_molecules)
             textfile.close()
             print("Stability metrics:", stability, "--", rdkit_metrics[0])
+        return to_log
 
     def reset(self):
         for metric in [self.n_dist_mae, self.node_dist_mae, self.edge_dist_mae, self.valency_dist_mae]:

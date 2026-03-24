@@ -57,7 +57,7 @@ class TrainLossDiscrete(nn.Module):
         true_E: Tensor,
         true_y: Tensor,
         log: bool,
-    ) -> Tensor:
+    ) -> tuple[Tensor, dict[str, Tensor | float] | None]:
         """Compute the weighted cross-entropy loss for one training batch.
 
         Flattens X and E to 2-D, removes all-zero (padding) rows, then
@@ -71,12 +71,14 @@ class TrainLossDiscrete(nn.Module):
             true_X: One-hot ground-truth node types, shape ``(bs, n, d_X)``.
             true_E: One-hot ground-truth edge types, shape ``(bs, n, n, d_E)``.
             true_y: One-hot ground-truth global features, shape ``(bs, d_y)``.
-            log: If ``True``, a ``to_log`` dict is built containing
-                ``train_loss/batch_CE`` and per-component CE values.
-                The dict is currently unused (logging is handled by the caller).
+            log: If ``True``, also returns a dict with ``train_loss/batch_CE``
+                and per-component CE values; otherwise returns ``None`` for
+                the dict.
 
         Returns:
-            Scalar loss equal to ``loss_X + λ_E * loss_E + λ_y * loss_y``.
+            A tuple ``(loss, to_log)`` where ``loss`` is the scalar
+            ``loss_X + λ_E * loss_E + λ_y * loss_y`` and ``to_log`` is a
+            dict of batch metrics when ``log=True``, or ``None`` otherwise.
         """
         true_X = torch.reshape(true_X, (-1, true_X.size(-1)))  # (bs * n, dx)
         true_E = torch.reshape(true_E, (-1, true_E.size(-1)))  # (bs * n * n, de)
@@ -97,12 +99,16 @@ class TrainLossDiscrete(nn.Module):
         loss_E = self.edge_loss(flat_pred_E, flat_true_E) if true_E.numel() > 0 else 0.0
         loss_y = self.y_loss(pred_y, true_y) if true_y.numel() > 0 else 0.0
 
+        loss = loss_X + self.lambda_train[0] * loss_E + self.lambda_train[1] * loss_y
+        to_log = None
         if log:
-            to_log = {"train_loss/batch_CE": (loss_X + loss_E + loss_y).detach(),
-                      "train_loss/X_CE": self.node_loss.compute() if true_X.numel() > 0 else -1,
-                      "train_loss/E_CE": self.edge_loss.compute() if true_E.numel() > 0 else -1,
-                      "train_loss/y_CE": self.y_loss.compute() if true_y.numel() > 0 else -1}
-        return loss_X + self.lambda_train[0] * loss_E + self.lambda_train[1] * loss_y
+            to_log = {
+                "train_loss/batch_CE": (loss_X + loss_E + loss_y).detach(),
+                "train_loss/X_CE": self.node_loss.compute() if true_X.numel() > 0 else -1,
+                "train_loss/E_CE": self.edge_loss.compute() if true_E.numel() > 0 else -1,
+                "train_loss/y_CE": self.y_loss.compute() if true_y.numel() > 0 else -1,
+            }
+        return loss, to_log
 
     def reset(self) -> None:
         """Reset all metric accumulators at the start of a new epoch."""

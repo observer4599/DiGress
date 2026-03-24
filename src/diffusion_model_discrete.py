@@ -211,7 +211,7 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
         noisy_data = self.apply_noise(X, E, data.y, node_mask)
         extra_data = self.compute_extra_data(noisy_data)
         pred = self.forward(noisy_data, extra_data, node_mask)
-        loss = self.train_loss(
+        loss, loss_log = self.train_loss(
             masked_pred_X=pred.X,
             masked_pred_E=pred.E,
             pred_y=pred.y,
@@ -220,6 +220,8 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
             true_y=data.y,
             log=i % self.log_every_steps == 0,
         )
+        if loss_log is not None:
+            self.log_dict(loss_log, on_step=True, on_epoch=False)
 
         self.train_metrics(
             masked_pred_X=pred.X,
@@ -383,7 +385,7 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
                 samples_left_to_generate -= to_generate
                 chains_left_to_save -= chains_save
             self.print("Computing sampling metrics...")
-            self.sampling_metrics.forward(
+            sampling_log = self.sampling_metrics.forward(
                 samples,
                 self.name,
                 self.current_epoch,
@@ -391,6 +393,7 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
                 test=False,
                 local_rank=self.local_rank,
             )
+            self.log_dict(sampling_log)
             self.print(
                 f"Done. Sampling took {time.time() - start:.2f} seconds\n"
             )
@@ -521,7 +524,7 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
                     f.write("\n")
                 f.write("\n")
         self.print("Generated graphs Saved. Computing sampling metrics...")
-        self.sampling_metrics(
+        sampling_log = self.sampling_metrics(
             samples,
             self.name,
             self.current_epoch,
@@ -529,6 +532,7 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
             test=True,
             local_rank=self.local_rank,
         )
+        self.log_dict(sampling_log)
         self.print("Done testing.")
 
     def kl_prior(
