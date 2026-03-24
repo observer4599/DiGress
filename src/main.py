@@ -15,7 +15,7 @@ from pytorch_lightning.loggers import TensorBoardLogger
 from pytorch_lightning.utilities.warnings import PossibleUserWarning
 
 from src import utils
-from metrics.abstract_metrics import TrainAbstractMetricsDiscrete
+from metrics import TrainAbstractMetricsDiscrete
 
 from diffusion_model_discrete import DiscreteDenoisingDiffusion
 from diffusion.extra_features import DummyExtraFeatures, ExtraFeatures
@@ -101,8 +101,7 @@ def main(cfg: DictConfig):
                         'extra_features': extra_features, 'domain_features': domain_features}
 
     elif dataset_config["name"] in ['qm9', 'guacamol', 'moses']:
-        from metrics.molecular_metrics import SamplingMolecularMetrics
-        from metrics.molecular_metrics_discrete import TrainMolecularMetricsDiscrete
+        from metrics import SamplingMolecularMetrics, TrainMolecularMetricsDiscrete
         from diffusion.extra_features_molecular import ExtraMolecularFeatures
         from analysis.visualization import MolecularVisualization
 

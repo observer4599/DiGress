@@ -2,7 +2,7 @@
 
 import torch.nn as nn
 from torch import Tensor
-from src.metrics.abstract_metrics import CrossEntropyMetric
+from src.metrics.base_metrics import CrossEntropyMetric
 
 
 class TrainLossDiscrete(nn.Module):

@@ -1,4 +1,4 @@
-"""Tests for src/metrics/abstract_metrics.py.
+"""Tests for src/metrics/base_metrics.py.
 
 Covers the key behavioral contracts of each torchmetrics subclass — the
 computations most likely to silently break during refactoring.
@@ -12,7 +12,7 @@ Test groups:
 
 import torch
 import pytest
-from src.metrics.abstract_metrics import (
+from src.metrics.base_metrics import (
     SumExceptBatchMetric,
     SumExceptBatchKL,
     CrossEntropyMetric,
