@@ -1,8 +1,8 @@
 """Shared utilities for the DiGress graph diffusion model.
 
 Contains the PlaceHolder container for batched graph data (node features X,
-edge features E, global features y), dense-format conversion helpers,
-normalization/unnormalization routines, and config-merging utilities.
+edge features E, global features y), dense-format conversion helpers, and
+config-merging utilities.
 
 This module is used throughout the pipeline — by dataset loaders, the
 diffusion model, the noise schedule, and the transformer backbone — so
@@ -39,96 +39,6 @@ def create_folders(args) -> None:
         os.makedirs('chains/' + args.general.name)
     except OSError:
         pass
-
-
-def normalize(
-    X: torch.Tensor,
-    E: torch.Tensor,
-    y: torch.Tensor,
-    norm_values: list[float],
-    norm_biases: list[float],
-    node_mask: torch.Tensor,
-) -> 'PlaceHolder':
-    """Normalize node, edge, and global graph features to zero mean and unit variance.
-
-    Applies the transformation ``z = (z - bias) / value`` independently to
-    each feature type using dataset-level statistics. After normalization, the
-    edge diagonal (self-loops) is zeroed out and padding nodes are masked.
-
-    In the DiGress continuous diffusion variant, normalization is applied
-    before adding noise so that all feature types live on a comparable scale.
-
-    Args:
-        X: Node features of shape ``(batch_size, num_nodes, node_feature_dim)``.
-        E: Edge features of shape
-            ``(batch_size, num_nodes, num_nodes, edge_feature_dim)``.
-            Must be symmetric with a zeroed diagonal (undirected, no self-loops).
-        y: Global graph features of shape ``(batch_size, global_feature_dim)``.
-        norm_values: Per-feature-type standard deviations ``[std_X, std_E, std_y]``
-            used as divisors. Computed from the training set and stored in
-            ``cfg.model.normalize_factors``.
-        norm_biases: Per-feature-type means ``[mean_X, mean_E, mean_y]``
-            subtracted before division. Stored in ``cfg.model.norm_biases``.
-        node_mask: Boolean tensor of shape ``(batch_size, num_nodes)`` where
-            ``True`` marks real nodes and ``False`` marks padding.
-
-    Returns:
-        A PlaceHolder containing normalized X, E, y with padding zeroed out.
-    """
-    X = (X - norm_biases[0]) / norm_values[0]
-    E = (E - norm_biases[1]) / norm_values[1]
-    y = (y - norm_biases[2]) / norm_values[2]
-
-    diag = torch.eye(E.shape[1], dtype=torch.bool).unsqueeze(0).expand(E.shape[0], -1, -1)
-    E[diag] = 0
-
-    return PlaceHolder(X=X, E=E, y=y).mask(node_mask)
-
-
-def unnormalize(
-    X: torch.Tensor,
-    E: torch.Tensor,
-    y: torch.Tensor,
-    norm_values: list[float],
-    norm_biases: list[float],
-    node_mask: torch.Tensor,
-    collapse: bool = False,
-) -> 'PlaceHolder':
-    """Reverse normalization and optionally collapse one-hot features to class indices.
-
-    Applies the inverse transform ``z = z * value + bias`` for each feature
-    type. When ``collapse=True``, takes the ``argmax`` along the feature
-    dimension to convert soft/one-hot distributions to discrete class labels;
-    padding entries are set to ``-1``.
-
-    Used during sampling: intermediate denoising steps call this with
-    ``collapse=False`` to recover the continuous representation, while the
-    final step uses ``collapse=True`` to obtain discrete atom/bond types for
-    molecule validity checks.
-
-    Args:
-        X: Normalized node features of shape
-            ``(batch_size, num_nodes, node_feature_dim)``.
-        E: Normalized edge features of shape
-            ``(batch_size, num_nodes, num_nodes, edge_feature_dim)``.
-        y: Normalized global features of shape
-            ``(batch_size, global_feature_dim)``.
-        norm_values: Per-feature-type standard deviations ``[std_X, std_E, std_y]``.
-        norm_biases: Per-feature-type means ``[mean_X, mean_E, mean_y]``.
-        node_mask: Boolean tensor of shape ``(batch_size, num_nodes)``; ``True``
-            for real nodes, ``False`` for padding.
-        collapse: If ``True``, convert one-hot/soft features to integer class
-            indices via ``argmax`` and mark padded positions as ``-1``.
-
-    Returns:
-        A PlaceHolder with unnormalized X, E, y. When ``collapse=True``, X and
-        E contain ``int``-valued class indices instead of feature vectors.
-    """
-    X = (X * norm_values[0] + norm_biases[0])
-    E = (E * norm_values[1] + norm_biases[1])
-    y = y * norm_values[2] + norm_biases[2]
-
-    return PlaceHolder(X=X, E=E, y=y).mask(node_mask, collapse)
 
 
 def to_dense(
@@ -174,7 +84,6 @@ def to_dense(
     """
     X, node_mask = to_dense_batch(x=x, batch=batch)
     edge_index, edge_attr = torch_geometric.utils.remove_self_loops(edge_index, edge_attr)
-    # TODO: carefully check if setting node_mask as a bool breaks the continuous case
     max_num_nodes = X.size(1)
     E = to_dense_adj(edge_index=edge_index, batch=batch, edge_attr=edge_attr, max_num_nodes=max_num_nodes)
     E = encode_no_edge(E)

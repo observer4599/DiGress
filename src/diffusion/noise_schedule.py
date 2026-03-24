@@ -10,81 +10,17 @@ Three transition strategies are provided:
 - MarginalUniformTransition: noise proportional to the data marginal distribution
 - AbsorbingStateTransition: all mass absorbs into a designated mask/absorbing token
 
+``PredefinedNoiseScheduleDiscrete`` provides the per-step β and cumulative ᾱ
+lookup tables used by ``DiscreteDenoisingDiffusion``.
+
 Reference:
     Vignac et al., "DiGress: Discrete Denoising Diffusion for Graph Generation",
     ICLR 2023. https://openreview.net/forum?id=UaAD-Nu86WX
 """
 
-import numpy as np
 import torch
 from src import utils
 from src.diffusion import diffusion_utils
-
-
-class PredefinedNoiseSchedule(torch.nn.Module):
-    """Log-SNR noise schedule for the continuous lifted diffusion model.
-
-    Precomputes and stores γ(t) = log(σ²(t) / α²(t)) for t = 0 … T,
-    where α²(t) and σ²(t) = 1 − α²(t) are the signal and noise variances
-    under the cosine schedule (Chen et al., 2021). γ(t) is the negated
-    log signal-to-noise ratio and is used by LiftedDenoisingDiffusion to
-    parameterise the forward process.
-
-    Attributes:
-        timesteps: Total number of diffusion steps T.
-        gamma: Non-trainable parameter of shape (T + 1,) holding γ(t) for
-            each integer timestep. Values increase monotonically from near 0
-            at t = 0 to large positive values at t = T.
-    """
-
-    def __init__(self, noise_schedule: str, timesteps: int) -> None:
-        """Precompute the γ lookup table for the given schedule.
-
-        Args:
-            noise_schedule: Schedule type. Currently only ``'cosine'`` is
-                supported; ``'custom'`` is reserved but not yet implemented.
-            timesteps: Total number of diffusion steps T. The lookup table
-                has length T + 1 (one entry per integer timestep 0 … T).
-
-        Raises:
-            NotImplementedError: If ``noise_schedule`` is ``'custom'``.
-            ValueError: If ``noise_schedule`` is an unrecognised string.
-        """
-        super().__init__()
-        self.timesteps = timesteps
-
-        if noise_schedule == 'cosine':
-            alphas2 = diffusion_utils.cosine_beta_schedule(timesteps)
-        elif noise_schedule == 'custom':
-            raise NotImplementedError()
-        else:
-            raise ValueError(noise_schedule)
-
-        sigmas2 = 1 - alphas2
-
-        log_alphas2 = np.log(alphas2)
-        log_sigmas2 = np.log(sigmas2)
-
-        log_alphas2_to_sigmas2 = log_alphas2 - log_sigmas2     # (timesteps + 1, )
-
-        self.gamma = torch.nn.Parameter(
-            torch.from_numpy(-log_alphas2_to_sigmas2).float(),
-            requires_grad=False)
-
-    def forward(self, t: torch.Tensor) -> torch.Tensor:
-        """Look up γ(t) for a batch of normalised times.
-
-        Converts t from the continuous range [0, 1] to the nearest integer
-        timestep by rounding, then returns the precomputed γ value.
-
-        Args:
-            t: Normalised time tensor of any shape with values in [0, 1].
-
-        Returns:
-            γ values with the same shape as ``t``.
-        """
-        t_int = torch.round(t * self.timesteps).long()
-        return self.gamma[t_int]
 
 
 class PredefinedNoiseScheduleDiscrete(torch.nn.Module):

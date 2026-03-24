@@ -6,7 +6,6 @@ computations most likely to silently break during refactoring.
 Test groups:
 
 - ``SumExceptBatchMetric``: sum-over-elements, divide-by-batch-size semantics.
-- ``SumExceptBatchMSE``: squared error summed per element, normalised by batch rows.
 - ``SumExceptBatchKL``: KL divergence summed and normalised by batch size.
 - ``CrossEntropyMetric``: one-hot targets converted via argmax before CE loss.
 """
@@ -15,7 +14,6 @@ import torch
 import pytest
 from src.metrics.abstract_metrics import (
     SumExceptBatchMetric,
-    SumExceptBatchMSE,
     SumExceptBatchKL,
     CrossEntropyMetric,
 )
@@ -42,20 +40,6 @@ def test_sum_except_batch_metric_accumulates_across_updates() -> None:
     metric = SumExceptBatchMetric()
     metric.update(torch.ones(2, 3))
     metric.update(torch.ones(2, 3))
-    assert metric.compute().item() == pytest.approx(3.0)
-
-
-def test_sum_except_batch_mse_normalises_by_batch_rows() -> None:
-    """MSE divides by number of rows (graphs), not total number of elements.
-
-    Shape (2, 3) with preds=1, target=0 everywhere: sum_squared_error=6,
-    n_obs=2 (rows only) → compute()=3.0.  A standard MeanSquaredError would
-    return 1.0 by dividing by numel()=6 instead.
-    """
-    metric = SumExceptBatchMSE()
-    preds = torch.ones(2, 3)
-    target = torch.zeros(2, 3)
-    metric.update(preds, target)
     assert metric.compute().item() == pytest.approx(3.0)
 
 

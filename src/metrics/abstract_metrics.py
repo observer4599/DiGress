@@ -1,23 +1,14 @@
-"""Abstract metric classes and batch-normalised torchmetrics for the DiGress diffusion model.
+"""Training-metric interface and batch-normalised torchmetrics for DiGress.
 
-This module provides two kinds of building blocks:
+``TrainAbstractMetricsDiscrete`` is the no-op base class for the discrete
+diffusion training loop; concrete subclasses (e.g. ``TrainMolecularMetricsDiscrete``)
+override ``forward``, ``reset``, and ``log_epoch_metrics``.
 
-1. **Abstract training-metric interfaces** (`TrainAbstractMetricsDiscrete`,
-   `TrainAbstractMetrics`) — no-op base classes that define the interface
-   expected by the diffusion training loop.  Both inherit from
-   `_TrainAbstractMetricsBase`, which provides default no-op `reset` and
-   `log_epoch_metrics` implementations.  Concrete subclasses (e.g.
-   `TrainMolecularMetricsDiscrete`) override `forward`, `reset`, and
-   `log_epoch_metrics` to track dataset-specific losses.
-
-2. **Batch-normalised torchmetrics** — `Metric` subclasses that accumulate
-   statistics across batches and return per-graph averages via `compute()`.
-   All four concrete metrics (`SumExceptBatchMetric`, `SumExceptBatchMSE`,
-   `SumExceptBatchKL`, `CrossEntropyMetric`) inherit from `_SumExceptBatchBase`,
-   which holds the shared state and `compute` logic.  Each subclass only
-   implements `update`.  All normalise by the number of *graphs* (first
-   dimension) rather than the total number of elements, matching the loss
-   formulation in the DiGress paper (Vignac et al., 2022).
+``SumExceptBatchMetric``, ``SumExceptBatchKL``, and ``CrossEntropyMetric`` are
+torchmetrics ``Metric`` subclasses that accumulate statistics across batches and
+return per-graph averages via ``compute()``.  All normalise by the number of
+graphs (first dimension) rather than the total number of elements, matching the
+DiGress loss formulation (Vignac et al., 2022).
 """
 
 import torch
@@ -26,40 +17,17 @@ from torch.nn import functional as F
 from torchmetrics import Metric
 
 
-class _TrainAbstractMetricsBase:
-    """Shared no-op base for discrete and continuous training-metric interfaces.
+class TrainAbstractMetricsDiscrete:
+    """No-op base class defining the training-metric interface for discrete diffusion.
 
-    Provides default implementations of ``reset`` and ``log_epoch_metrics``
-    that are identical across both variants.  Concrete subclasses override
-    ``forward`` (and optionally the other methods) to add dataset-specific
-    logic.
+    Concrete subclasses (e.g. ``TrainMolecularMetricsDiscrete``) override
+    ``forward``, ``reset``, and ``log_epoch_metrics`` to track node- and
+    edge-type prediction quality.  The default implementation is used for
+    non-molecular datasets where no per-epoch logging is required.
     """
 
     def __call__(self, *args, **kwargs) -> None:
         return self.forward(*args, **kwargs)
-
-    def reset(self) -> None:
-        """Reset all accumulated metric state at the start of a new epoch."""
-        pass
-
-    def log_epoch_metrics(self) -> tuple[None, None]:
-        """Return per-epoch metric summaries after all batches have been seen.
-
-        Returns:
-            A ``(None, None)`` tuple; subclasses return ``(node_metric, edge_metric)``.
-        """
-        return None, None
-
-
-class TrainAbstractMetricsDiscrete(_TrainAbstractMetricsBase):
-    """No-op base class defining the training-metric interface for discrete diffusion.
-
-    Concrete subclasses should override ``forward`` (and optionally ``reset``
-    and ``log_epoch_metrics``) to track node- and edge-type prediction quality
-    during discrete-time diffusion training.  The default implementation is
-    used for non-molecular datasets where no additional per-epoch logging is
-    required.
-    """
 
     def forward(
         self,
@@ -69,55 +37,13 @@ class TrainAbstractMetricsDiscrete(_TrainAbstractMetricsBase):
         true_E: Tensor,
         log: bool,
     ) -> None:
-        """Accumulate per-batch training metrics.
-
-        Args:
-            masked_pred_X: Predicted node-type logits with padding masked out,
-                shape ``(bs * n, d_X)``.
-            masked_pred_E: Predicted edge-type logits with padding masked out,
-                shape ``(bs * n * n, d_E)``.
-            true_X: One-hot ground-truth node types, shape ``(bs * n, d_X)``.
-            true_E: One-hot ground-truth edge types, shape ``(bs * n * n, d_E)``.
-            log: Whether to log scalar values to the trainer logger this step.
-        """
         pass
 
-
-class TrainAbstractMetrics(_TrainAbstractMetricsBase):
-    """No-op base class defining the training-metric interface for continuous diffusion.
-
-    Concrete subclasses should override ``forward`` (and optionally ``reset``
-    and ``log_epoch_metrics``) to track the quality of predicted noise
-    (ε-prediction) for nodes, edges, and global graph features during
-    continuous-time diffusion training.  The default implementation is used
-    for non-molecular datasets.
-    """
-
-    def forward(
-        self,
-        masked_pred_epsX: Tensor,
-        masked_pred_epsE: Tensor,
-        pred_y: Tensor,
-        true_epsX: Tensor,
-        true_epsE: Tensor,
-        true_y: Tensor,
-        log: bool,
-    ) -> None:
-        """Accumulate per-batch training metrics.
-
-        Args:
-            masked_pred_epsX: Predicted noise for node features with padding
-                masked out, shape ``(bs * n, d_X)``.
-            masked_pred_epsE: Predicted noise for edge features with padding
-                masked out, shape ``(bs * n * n, d_E)``.
-            pred_y: Predicted global graph features, shape ``(bs, d_y)``.
-            true_epsX: Ground-truth noise for node features, shape ``(bs * n, d_X)``.
-            true_epsE: Ground-truth noise for edge features,
-                shape ``(bs * n * n, d_E)``.
-            true_y: Ground-truth global graph features, shape ``(bs, d_y)``.
-            log: Whether to log scalar values to the trainer logger this step.
-        """
+    def reset(self) -> None:
         pass
+
+    def log_epoch_metrics(self) -> tuple[None, None]:
+        return None, None
 
 
 class _SumExceptBatchBase(Metric):
@@ -163,30 +89,6 @@ class SumExceptBatchMetric(_SumExceptBatchBase):
         """
         self.total_value += torch.sum(values)
         self.total_samples += values.shape[0]
-
-
-class SumExceptBatchMSE(_SumExceptBatchBase):
-    """MSE metric that normalises by batch size rather than total element count.
-
-    Standard MSE divides the squared-error sum by the total number of scalar
-    elements.  This class instead divides by the number of rows (graphs /
-    examples), so the result is a *per-graph* MSE.  This matches the
-    noise-prediction loss used in continuous-time DiGress.
-
-    Used in the diffusion model to track ``val_X_mse``, ``val_E_mse``,
-    ``val_y_mse``, and their test counterparts.
-    """
-
-    def update(self, preds: Tensor, target: Tensor) -> None:
-        """Accumulate squared error sum and row count.
-
-        Args:
-            preds: Model predictions; must have the same shape as ``target``.
-            target: Ground-truth values; must have the same shape as ``preds``.
-        """
-        assert preds.shape == target.shape
-        self.total_value += torch.sum((preds - target) ** 2)
-        self.total_samples += preds.shape[0]
 
 
 class SumExceptBatchKL(_SumExceptBatchBase):

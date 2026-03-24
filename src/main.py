@@ -15,9 +15,8 @@ from pytorch_lightning.loggers import TensorBoardLogger
 from pytorch_lightning.utilities.warnings import PossibleUserWarning
 
 from src import utils
-from metrics.abstract_metrics import TrainAbstractMetricsDiscrete, TrainAbstractMetrics
+from metrics.abstract_metrics import TrainAbstractMetricsDiscrete
 
-from diffusion_model import LiftedDenoisingDiffusion
 from diffusion_model_discrete import DiscreteDenoisingDiffusion
 from diffusion.extra_features import DummyExtraFeatures, ExtraFeatures
 
@@ -30,10 +29,7 @@ def get_resume(cfg, model_kwargs):
     saved_cfg = cfg.copy()
     name = cfg.general.name + '_resume'
     resume = cfg.general.test_only
-    if cfg.model.type == 'discrete':
-        model = DiscreteDenoisingDiffusion.load_from_checkpoint(resume, **model_kwargs)
-    else:
-        model = LiftedDenoisingDiffusion.load_from_checkpoint(resume, **model_kwargs)
+    model = DiscreteDenoisingDiffusion.load_from_checkpoint(resume, **model_kwargs)
     cfg = model.cfg
     cfg.general.test_only = resume
     cfg.general.name = name
@@ -50,10 +46,7 @@ def get_resume_adaptive(cfg, model_kwargs):
 
     resume_path = os.path.join(root_dir, cfg.general.resume)
 
-    if cfg.model.type == 'discrete':
-        model = DiscreteDenoisingDiffusion.load_from_checkpoint(resume_path, **model_kwargs)
-    else:
-        model = LiftedDenoisingDiffusion.load_from_checkpoint(resume_path, **model_kwargs)
+    model = DiscreteDenoisingDiffusion.load_from_checkpoint(resume_path, **model_kwargs)
     new_cfg = model.cfg
 
     for category in cfg:
@@ -89,10 +82,10 @@ def main(cfg: DictConfig):
         logger.info("Sampling metrics ready.")
 
         dataset_infos = SpectreDatasetInfos(datamodule, dataset_config)
-        train_metrics = TrainAbstractMetricsDiscrete() if cfg.model.type == 'discrete' else TrainAbstractMetrics()
+        train_metrics = TrainAbstractMetricsDiscrete()
         visualization_tools = NonMolecularVisualization()
 
-        if cfg.model.type == 'discrete' and cfg.model.extra_features is not None:
+        if cfg.model.extra_features is not None:
             logger.info("Computing extra features (type={})...", cfg.model.extra_features)
             extra_features = ExtraFeatures(cfg.model.extra_features, dataset_info=dataset_infos)
         else:
@@ -108,7 +101,7 @@ def main(cfg: DictConfig):
                         'extra_features': extra_features, 'domain_features': domain_features}
 
     elif dataset_config["name"] in ['qm9', 'guacamol', 'moses']:
-        from metrics.molecular_metrics import TrainMolecularMetrics, SamplingMolecularMetrics
+        from metrics.molecular_metrics import SamplingMolecularMetrics
         from metrics.molecular_metrics_discrete import TrainMolecularMetricsDiscrete
         from diffusion.extra_features_molecular import ExtraMolecularFeatures
         from analysis.visualization import MolecularVisualization
@@ -133,7 +126,7 @@ def main(cfg: DictConfig):
         else:
             raise ValueError("Dataset not implemented")
 
-        if cfg.model.type == 'discrete' and cfg.model.extra_features is not None:
+        if cfg.model.extra_features is not None:
             extra_features = ExtraFeatures(cfg.model.extra_features, dataset_info=dataset_infos)
             domain_features = ExtraMolecularFeatures(dataset_infos=dataset_infos)
         else:
@@ -143,10 +136,7 @@ def main(cfg: DictConfig):
         dataset_infos.compute_input_output_dims(datamodule=datamodule, extra_features=extra_features,
                                                 domain_features=domain_features)
 
-        if cfg.model.type == 'discrete':
-            train_metrics = TrainMolecularMetricsDiscrete(dataset_infos)
-        else:
-            train_metrics = TrainMolecularMetrics(dataset_infos)
+        train_metrics = TrainMolecularMetricsDiscrete(dataset_infos)
 
         # We do not evaluate novelty during training
         sampling_metrics = SamplingMolecularMetrics(dataset_infos, train_smiles)
@@ -170,10 +160,7 @@ def main(cfg: DictConfig):
     utils.create_folders(cfg)
 
     logger.info("Initialising model...")
-    if cfg.model.type == 'discrete':
-        model = DiscreteDenoisingDiffusion(cfg=cfg, **model_kwargs)
-    else:
-        model = LiftedDenoisingDiffusion(cfg=cfg, **model_kwargs)
+    model = DiscreteDenoisingDiffusion(cfg=cfg, **model_kwargs)
 
     callbacks = []
     if cfg.train.save_model:

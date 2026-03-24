@@ -9,27 +9,11 @@ import torch
 import pytest
 
 from src.diffusion.noise_schedule import (
-    PredefinedNoiseSchedule,
     PredefinedNoiseScheduleDiscrete,
     DiscreteUniformTransition,
     MarginalUniformTransition,
     AbsorbingStateTransition,
 )
-
-
-def test_predefined_noise_schedule_gamma_shape():
-    """Gamma lookup table has exactly (timesteps + 1) entries."""
-    sched = PredefinedNoiseSchedule(noise_schedule='cosine', timesteps=100)
-    assert sched.gamma.shape == (101,)
-
-
-def test_predefined_noise_schedule_forward_indexes_gamma():
-    """Forward pass at t=0 and t=1 returns gamma[0] and gamma[timesteps] respectively."""
-    sched = PredefinedNoiseSchedule(noise_schedule='cosine', timesteps=50)
-    t0 = sched(torch.tensor(0.0))
-    t1 = sched(torch.tensor(1.0))
-    assert t0.item() == pytest.approx(sched.gamma[0].item())
-    assert t1.item() == pytest.approx(sched.gamma[50].item())
 
 
 def test_predefined_noise_schedule_discrete_alphas_bar_decreasing():
