@@ -1,4 +1,4 @@
-"""Tests for DiscreteDenoisingDiffusion in src/diffusion_model_discrete.py.
+"""Tests for DiscreteDenoisingDiffusion in src/model.py.
 
 Captures key behavioral invariants for regression detection during refactoring:
 limit_dist normalisation, apply_noise output contract, compute_extra_data
@@ -16,7 +16,7 @@ import pytest
 import torch
 from types import SimpleNamespace
 
-from src.diffusion_model_discrete import DiscreteDenoisingDiffusion
+from src.model import DiscreteDenoisingDiffusion
 from src.diffusion.distributions import DistributionNodes
 from src import utils
 
