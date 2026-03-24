@@ -20,8 +20,121 @@ from torch import Tensor
 
 from src import utils
 from src.diffusion import diffusion_utils
-from src.models.layers import Xtoy, Etoy, masked_softmax
 
+
+# ---------------------------------------------------------------------------
+# Utility layers used internally by NodeEdgeBlock
+# ---------------------------------------------------------------------------
+
+class Xtoy(nn.Module):
+    """Aggregates node features into a graph-level feature vector.
+
+    Summarises the node feature matrix X into a single vector per graph
+    by computing four statistics over the node dimension (mean, min, max,
+    std), concatenating them, and projecting to the global feature space.
+    Used in NodeEdgeBlock to compute the node contribution to y.
+
+    Args:
+        dx: Dimensionality of each node feature vector.
+        dy: Dimensionality of the output global feature vector.
+    """
+
+    def __init__(self, dx: int, dy: int) -> None:
+        super().__init__()
+        self.lin = nn.Linear(4 * dx, dy)
+
+    def forward(self, X: Tensor) -> Tensor:
+        """Aggregate node features to a graph-level vector.
+
+        Args:
+            X: Node feature matrix of shape (bs, n, dx), where bs is
+                batch size and n is the number of nodes. Padding nodes
+                should be zeroed out before calling.
+
+        Returns:
+            Global feature vectors of shape (bs, dy), one per graph.
+        """
+        m = X.mean(dim=1)
+        mi = X.min(dim=1)[0]
+        ma = X.max(dim=1)[0]
+        std = X.std(dim=1)
+        z = torch.hstack((m, mi, ma, std))
+        out = self.lin(z)
+        return out
+
+
+class Etoy(nn.Module):
+    """Aggregates edge features into a graph-level feature vector.
+
+    Summarises the edge feature tensor E into a single vector per graph
+    by computing four statistics over all (i, j) edge pairs (mean, min,
+    max, std), concatenating them, and projecting to the global feature
+    space. Used in NodeEdgeBlock to compute the edge contribution to y.
+
+    Args:
+        d: Dimensionality of each edge feature vector.
+        dy: Dimensionality of the output global feature vector.
+    """
+
+    def __init__(self, d: int, dy: int) -> None:
+        super().__init__()
+        self.lin = nn.Linear(4 * d, dy)
+
+    def forward(self, E: Tensor) -> Tensor:
+        """Aggregate edge features to a graph-level vector.
+
+        Args:
+            E: Edge feature tensor of shape (bs, n, n, de), where bs is
+                batch size and n is the number of nodes. Self-loop and
+                padding entries should be zeroed out before calling.
+
+        Returns:
+            Global feature vectors of shape (bs, dy), one per graph.
+        """
+        m = E.mean(dim=(1, 2))
+        mi = E.min(dim=2)[0].min(dim=1)[0]
+        ma = E.max(dim=2)[0].max(dim=1)[0]
+        std = torch.std(E, dim=(1, 2))
+        z = torch.hstack((m, mi, ma, std))
+        out = self.lin(z)
+        return out
+
+
+def masked_softmax(
+    x: Tensor,
+    mask: Tensor,
+    **kwargs,
+) -> Tensor:
+    """Apply softmax over positions indicated by a boolean mask.
+
+    Positions where mask is 0 are set to -inf before the softmax, so
+    they receive zero attention weight. Used in NodeEdgeBlock to exclude
+    padding nodes from attention score normalisation.
+
+    If the mask is entirely zero (no valid positions), x is returned
+    unchanged to avoid NaN from softmax over all-inf inputs.
+
+    Args:
+        x: Logit tensor of any shape. The softmax and masking are
+            applied element-wise; dim must be supplied via kwargs.
+        mask: Boolean or 0/1 tensor broadcastable to x. Positions with
+            value 0 are masked out.
+        **kwargs: Passed directly to torch.softmax (e.g. dim=2).
+
+    Returns:
+        Tensor of the same shape as x with softmax applied only over
+        unmasked positions.
+    """
+    if mask.sum() == 0:
+        return x
+    x_masked = x.clone()
+    x_masked[mask == 0] = -float("inf")
+    return torch.softmax(x_masked, **kwargs)
+
+
+# ---------------------------------------------------------------------------
+# Transformer layers
+# ---------------------------------------------------------------------------
 
 class XEyTransformerLayer(nn.Module):
     """Single transformer layer that jointly updates node, edge, and global features.
@@ -29,8 +142,9 @@ class XEyTransformerLayer(nn.Module):
     Wraps a NodeEdgeBlock (the attention sub-layer) with residual connections,
     layer normalisation, and independent feed-forward networks for each of the
     three feature types: node features X, edge features E, and graph-level
-    features y. The structure follows the Pre-LN transformer variant applied
-    simultaneously to all three feature spaces.
+    features y. The structure follows the Post-LN transformer variant
+    (Vaswani et al., 2017) applied simultaneously to all three feature spaces:
+    layer normalisation is applied after each residual addition.
 
     Args:
         dx: Dimensionality of node features.
@@ -48,7 +162,8 @@ class XEyTransformerLayer(nn.Module):
 
     def __init__(self, dx: int, de: int, dy: int, n_head: int, dim_ffX: int = 2048,
                  dim_ffE: int = 128, dim_ffy: int = 2048, dropout: float = 0.1,
-                 layer_norm_eps: float = 1e-5, device=None, dtype=None) -> None:
+                 layer_norm_eps: float = 1e-5, device: torch.device | None = None,
+                 dtype: torch.dtype | None = None) -> None:
         kw = {'device': device, 'dtype': dtype}
         super().__init__()
 
@@ -189,13 +304,190 @@ class NodeEdgeBlock(nn.Module):
         self.e_out = Linear(dx, de)
         self.y_out = nn.Sequential(nn.Linear(dy, dy), nn.ReLU(), nn.Linear(dy, dy))
 
+    def _compute_qk_with_edge_bias(
+        self,
+        X: Tensor,
+        E: Tensor,
+        x_mask: Tensor,
+        e_mask1: Tensor,
+        e_mask2: Tensor,
+    ) -> Tensor:
+        """Project X to Q/K, compute element-wise attention scores, and bias with E.
+
+        Stages 1–2 of the NodeEdgeBlock forward pass. Queries and keys are
+        projected from X, reshaped to multi-head form, and combined with an
+        element-wise product Q_i ⊙ K_j to produce attention logits Y of shape
+        (bs, n, n, n_head, df). Unlike standard dot-product attention, which
+        collapses each head to a scalar score per (i, j) pair, this factorised
+        variant keeps a separate logit per feature dimension (n_head × df = dx
+        values per pair). This allows the subsequent FiLM conditioning from E
+        to independently modulate each logit dimension.
+
+        Edge features are then used as FiLM parameters to multiplicatively and
+        additively bias Y:
+            Y = Y * (E_mul + 1) + E_add
+
+        Args:
+            X: Node features of shape (bs, n, dx).
+            E: Edge features of shape (bs, n, n, de).
+            x_mask: Node validity mask of shape (bs, n, 1).
+            e_mask1: Edge validity mask of shape (bs, n, 1, 1), derived from
+                the source-node mask.
+            e_mask2: Edge validity mask of shape (bs, 1, n, 1), derived from
+                the target-node mask.
+
+        Returns:
+            Y: Edge-biased attention logits of shape (bs, n, n, n_head, df).
+        """
+        # Map X to queries and keys; zero out padding nodes.
+        Q = self.q(X) * x_mask           # (bs, n, dx)
+        K = self.k(X) * x_mask           # (bs, n, dx)
+        diffusion_utils.assert_correctly_masked(Q, x_mask)
+
+        # Reshape to multi-head form: (bs, n, n_head, df)
+        Q = Q.reshape((Q.size(0), Q.size(1), self.n_head, self.df))
+        K = K.reshape((K.size(0), K.size(1), self.n_head, self.df))
+
+        # Broadcast for pairwise product: Q over target dim, K over source dim.
+        Q = Q.unsqueeze(2)                              # (bs, n, 1, n_head, df)
+        K = K.unsqueeze(1)                              # (bs, 1, n, n_head, df)
+
+        # Scaled dot-product attention logits: (bs, n, n, n_head, df)
+        Y = Q * K
+        Y = Y / math.sqrt(Y.size(-1))
+        diffusion_utils.assert_correctly_masked(Y, (e_mask1 * e_mask2).unsqueeze(-1))
+
+        # Project E to FiLM scale and shift; reshape to match Y.
+        E1 = self.e_mul(E) * e_mask1 * e_mask2                        # bs, n, n, dx
+        E1 = E1.reshape((E.size(0), E.size(1), E.size(2), self.n_head, self.df))
+
+        E2 = self.e_add(E) * e_mask1 * e_mask2                        # bs, n, n, dx
+        E2 = E2.reshape((E.size(0), E.size(1), E.size(2), self.n_head, self.df))
+
+        # FiLM-bias attention logits with edge features.
+        Y = Y * (E1 + 1) + E2                  # (bs, n, n, n_head, df)
+        return Y
+
+    def _update_edges(
+        self,
+        Y: Tensor,
+        E: Tensor,
+        y: Tensor,
+        e_mask1: Tensor,
+        e_mask2: Tensor,
+    ) -> Tensor:
+        """Compute updated edge features from attention logits and global context.
+
+        Stage 3 of the NodeEdgeBlock forward pass. The edge-biased attention
+        logits Y (still in attention space) are flattened to dx dims and
+        FiLM-conditioned by y before a final linear projection to de dims.
+
+        Args:
+            Y: Attention logits of shape (bs, n, n, n_head, df).
+            E: Original edge features of shape (bs, n, n, de), used only for
+                the mask shape.
+            y: Global features of shape (bs, dy).
+            e_mask1: Edge validity mask of shape (bs, n, 1, 1).
+            e_mask2: Edge validity mask of shape (bs, 1, n, 1).
+
+        Returns:
+            newE: Updated edge features of shape (bs, n, n, de).
+        """
+        newE = Y.flatten(start_dim=3)                      # bs, n, n, dx
+        ye1 = self.y_e_add(y).unsqueeze(1).unsqueeze(1)  # bs, 1, 1, dx
+        ye2 = self.y_e_mul(y).unsqueeze(1).unsqueeze(1)
+        newE = ye1 + (ye2 + 1) * newE
+
+        newE = self.e_out(newE) * e_mask1 * e_mask2      # bs, n, n, de
+        diffusion_utils.assert_correctly_masked(newE, e_mask1 * e_mask2)
+        return newE
+
+    def _update_nodes(
+        self,
+        Y: Tensor,
+        X: Tensor,
+        y: Tensor,
+        x_mask: Tensor,
+        n: int,
+    ) -> Tensor:
+        """Compute updated node features via masked attention and global context.
+
+        Stage 4 of the NodeEdgeBlock forward pass. Softmax is applied over the
+        key-node dimension (dim=2) of Y, producing attention weights of shape
+        (bs, n, n, n_head, df): one scalar per (source, target, head, feature)
+        rather than the single scalar per (source, target, head) used in standard
+        multi-head attention. Values V are then aggregated by these weights, giving
+        a weighted sum for each (source, head, feature) independently. The result
+        is FiLM-conditioned by y and projected to dx dims.
+
+        Args:
+            Y: Attention logits of shape (bs, n, n, n_head, df).
+            X: Node features of shape (bs, n, dx).
+            y: Global features of shape (bs, dy).
+            x_mask: Node validity mask of shape (bs, n, 1).
+            n: Number of nodes (used to expand the softmax mask).
+
+        Returns:
+            newX: Updated node features of shape (bs, n, dx).
+        """
+        # Expand target-node mask to attention shape before softmax.
+        e_mask2 = x_mask.unsqueeze(1)                                    # bs, 1, n, 1
+        softmax_mask = e_mask2.expand(-1, n, -1, self.n_head)            # bs, n, n, n_head
+        attn = masked_softmax(Y, softmax_mask, dim=2)                    # bs, n, n, n_head, df
+
+        V = self.v(X) * x_mask                        # bs, n, dx
+        V = V.reshape((V.size(0), V.size(1), self.n_head, self.df))
+        V = V.unsqueeze(1)                                     # (bs, 1, n, n_head, df)
+
+        # Weighted sum over target nodes, then flatten back to dx.
+        weighted_V = attn * V
+        weighted_V = weighted_V.sum(dim=2)
+        weighted_V = weighted_V.flatten(start_dim=2)            # bs, n, dx
+
+        # FiLM-condition with global features.
+        yx1 = self.y_x_add(y).unsqueeze(1)
+        yx2 = self.y_x_mul(y).unsqueeze(1)
+        newX = yx1 + (yx2 + 1) * weighted_V
+
+        newX = self.x_out(newX) * x_mask
+        diffusion_utils.assert_correctly_masked(newX, x_mask)
+        return newX
+
+    def _update_graph(self, X: Tensor, E: Tensor, y: Tensor) -> Tensor:
+        """Compute updated global features from pooled node and edge representations.
+
+        Stage 5 of the NodeEdgeBlock forward pass. The new global vector is
+        the sum of a linear projection of the current y, node-level pooling
+        via Xtoy, and edge-level pooling via Etoy, passed through a two-layer
+        MLP.
+
+        X, E, and y here are the original inputs received by ``forward`` —
+        not the updated ``newX`` or ``newE`` from stages 3–4. All three
+        outputs (newX, newE, new_y) are therefore computed in parallel from
+        the same input representations, consistent with the joint update
+        design in DiGress.
+
+        Args:
+            X: Node features of shape (bs, n, dx).
+            E: Edge features of shape (bs, n, n, de).
+            y: Global features of shape (bs, dy).
+
+        Returns:
+            new_y: Updated global features of shape (bs, dy).
+        """
+        new_y = self.y_y(y) + self.x_y(X) + self.e_y(E)
+        return self.y_out(new_y)
+
     def forward(self, X: Tensor, E: Tensor, y: Tensor, node_mask: Tensor) -> tuple[Tensor, Tensor, Tensor]:
         """Compute edge-biased attention and update all three feature types.
 
         The computation proceeds in five stages:
 
-        1. **QK scores**: Queries and keys are projected from X and multiplied
-           per head, giving raw attention logits Y of shape (bs, n, n, n_head, df).
+        1. **QK scores**: Queries and keys are projected from X and combined with
+           an element-wise product Q_i ⊙ K_j per head, giving raw attention logits
+           Y of shape (bs, n, n, n_head, df). Each of the dx = n_head × df scalar
+           entries in Y is an independent logit, rather than the single scalar per
+           head produced by standard dot-product attention.
         2. **Edge-biased attention**: E is projected to FiLM parameters that
            multiplicatively and additively modulate Y:
                Y = Y * (E_mul + 1) + E_add
@@ -203,8 +495,9 @@ class NodeEdgeBlock(nn.Module):
            directly into the attention scores.
         3. **newE**: Y is flattened to (bs, n, n, dx) and FiLM-conditioned by y
            to produce the updated edge representation, projected to de dims.
-        4. **newX**: Softmax is applied to the (masked) Y logits, values V are
-           computed from X, and the weighted sum is FiLM-conditioned by y.
+        4. **newX**: Softmax is applied over key nodes for each (source, head,
+           feature) independently; values V are aggregated by those weights and
+           FiLM-conditioned by y.
         5. **new_y**: Updated from a linear projection of the current y plus
            graph-level pooling of X (via Xtoy) and E (via Etoy).
 
@@ -225,73 +518,10 @@ class NodeEdgeBlock(nn.Module):
         e_mask1 = x_mask.unsqueeze(2)           # bs, n, 1, 1
         e_mask2 = x_mask.unsqueeze(1)           # bs, 1, n, 1
 
-        # 1. Map X to keys and queries
-        Q = self.q(X) * x_mask           # (bs, n, dx)
-        K = self.k(X) * x_mask           # (bs, n, dx)
-        diffusion_utils.assert_correctly_masked(Q, x_mask)
-        # 2. Reshape to (bs, n, n_head, df) with dx = n_head * df
-
-        Q = Q.reshape((Q.size(0), Q.size(1), self.n_head, self.df))
-        K = K.reshape((K.size(0), K.size(1), self.n_head, self.df))
-
-        Q = Q.unsqueeze(2)                              # (bs, 1, n, n_head, df)
-        K = K.unsqueeze(1)                              # (bs, n, 1, n head, df)
-
-        # Compute unnormalized attentions. Y is (bs, n, n, n_head, df)
-        Y = Q * K
-        Y = Y / math.sqrt(Y.size(-1))
-        diffusion_utils.assert_correctly_masked(Y, (e_mask1 * e_mask2).unsqueeze(-1))
-
-        E1 = self.e_mul(E) * e_mask1 * e_mask2                        # bs, n, n, dx
-        E1 = E1.reshape((E.size(0), E.size(1), E.size(2), self.n_head, self.df))
-
-        E2 = self.e_add(E) * e_mask1 * e_mask2                        # bs, n, n, dx
-        E2 = E2.reshape((E.size(0), E.size(1), E.size(2), self.n_head, self.df))
-
-        # Incorporate edge features to the self attention scores.
-        Y = Y * (E1 + 1) + E2                  # (bs, n, n, n_head, df)
-
-        # Incorporate y to E
-        newE = Y.flatten(start_dim=3)                      # bs, n, n, dx
-        ye1 = self.y_e_add(y).unsqueeze(1).unsqueeze(1)  # bs, 1, 1, de
-        ye2 = self.y_e_mul(y).unsqueeze(1).unsqueeze(1)
-        newE = ye1 + (ye2 + 1) * newE
-
-        # Output E
-        newE = self.e_out(newE) * e_mask1 * e_mask2      # bs, n, n, de
-        diffusion_utils.assert_correctly_masked(newE, e_mask1 * e_mask2)
-
-        # Compute attentions. attn is still (bs, n, n, n_head, df)
-        softmax_mask = e_mask2.expand(-1, n, -1, self.n_head)    # bs, 1, n, 1
-        attn = masked_softmax(Y, softmax_mask, dim=2)  # bs, n, n, n_head
-
-        V = self.v(X) * x_mask                        # bs, n, dx
-        V = V.reshape((V.size(0), V.size(1), self.n_head, self.df))
-        V = V.unsqueeze(1)                                     # (bs, 1, n, n_head, df)
-
-        # Compute weighted values
-        weighted_V = attn * V
-        weighted_V = weighted_V.sum(dim=2)
-
-        # Send output to input dim
-        weighted_V = weighted_V.flatten(start_dim=2)            # bs, n, dx
-
-        # Incorporate y to X
-        yx1 = self.y_x_add(y).unsqueeze(1)
-        yx2 = self.y_x_mul(y).unsqueeze(1)
-        newX = yx1 + (yx2 + 1) * weighted_V
-
-        # Output X
-        newX = self.x_out(newX) * x_mask
-        diffusion_utils.assert_correctly_masked(newX, x_mask)
-
-        # Process y based on X and E
-        y = self.y_y(y)
-        e_y = self.e_y(E)
-        x_y = self.x_y(X)
-        new_y = y + x_y + e_y
-        new_y = self.y_out(new_y)               # bs, dy
-
+        Y = self._compute_qk_with_edge_bias(X, E, x_mask, e_mask1, e_mask2)
+        newE = self._update_edges(Y, E, y, e_mask1, e_mask2)
+        newX = self._update_nodes(Y, X, y, x_mask, n)
+        new_y = self._update_graph(X, E, y)
         return newX, newE, new_y
 
 
@@ -321,15 +551,18 @@ class GraphTransformer(nn.Module):
         hidden_mlp_dims: Dict with keys 'X', 'E', 'y' giving the hidden
             width of the input/output MLP projections.
         hidden_dims: Dict with keys 'dx', 'de', 'dy', 'n_head', 'dim_ffX',
-            'dim_ffE' specifying the internal transformer dimensions.
+            'dim_ffE' specifying the internal transformer dimensions. Note:
+            these keys differ from input_dims/output_dims ('X', 'E', 'y')
+            because they come from a separate section of the model config.
         output_dims: Dict with keys 'X', 'E', 'y' giving the output feature
             dimensionality for each type.
         act_fn_in: Activation module applied inside the input-projection MLPs.
         act_fn_out: Activation module applied inside the output-projection MLPs.
     """
 
-    def __init__(self, n_layers: int, input_dims: dict, hidden_mlp_dims: dict, hidden_dims: dict,
-                 output_dims: dict, act_fn_in: nn.ReLU(), act_fn_out: nn.ReLU()):
+    def __init__(self, n_layers: int, input_dims: dict[str, int], hidden_mlp_dims: dict[str, int],
+                 hidden_dims: dict[str, int], output_dims: dict[str, int],
+                 act_fn_in: nn.Module, act_fn_out: nn.Module) -> None:
         super().__init__()
         self.n_layers = n_layers
         self.out_dim_X = output_dims['X']

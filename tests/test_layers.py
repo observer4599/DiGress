@@ -1,13 +1,13 @@
-"""Tests for utility layers in src.models.layers.
+"""Tests for utility layers in src.transformer_model.
 
-Covers the three public components — Xtoy, Etoy, and masked_softmax —
+Covers the three components — Xtoy, Etoy, and masked_softmax —
 verifying output shapes, numerical contracts, and edge-case handling
 (e.g. all-zero masks, minimum-node graphs).
 """
 
 import pytest
 import torch
-from src.models.layers import Xtoy, Etoy, masked_softmax
+from src.transformer_model import Xtoy, Etoy, masked_softmax
 
 
 # --- Xtoy ---

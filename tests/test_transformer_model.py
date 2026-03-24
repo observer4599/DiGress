@@ -1,4 +1,4 @@
-"""Tests for src.models.transformer_model.
+"""Tests for src.transformer_model.
 
 Captures the current behavior of NodeEdgeBlock, XEyTransformerLayer, and
 GraphTransformer for regression detection during refactoring.
@@ -6,7 +6,7 @@ GraphTransformer for regression detection during refactoring.
 
 import pytest
 import torch
-from src.models.transformer_model import NodeEdgeBlock, XEyTransformerLayer, GraphTransformer
+from src.transformer_model import NodeEdgeBlock, XEyTransformerLayer, GraphTransformer
 
 
 # --- Shared dimensions ---

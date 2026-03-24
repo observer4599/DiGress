@@ -27,7 +27,7 @@ from diffusion.noise_schedule import (
     PredefinedNoiseScheduleDiscrete,
 )
 from metrics import SumExceptBatchKL, SumExceptBatchMetric, TrainLossDiscrete
-from models.transformer_model import GraphTransformer
+from transformer_model import GraphTransformer
 from src import utils
 from src.diffusion import diffusion_utils
 
