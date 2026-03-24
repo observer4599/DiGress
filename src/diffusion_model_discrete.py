@@ -14,18 +14,18 @@ unconditional graph sampling.
 import os
 import time
 
-from loguru import logger
 import pytorch_lightning as pl
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from loguru import logger
+from torchmetrics import MeanMetric
 
 from diffusion.noise_schedule import (
     DiscreteUniformTransition,
     MarginalUniformTransition,
     PredefinedNoiseScheduleDiscrete,
 )
-from torchmetrics import MeanMetric
 from metrics.abstract_metrics import SumExceptBatchKL, SumExceptBatchMetric
 from metrics.train_metrics import TrainLossDiscrete
 from models.transformer_model import GraphTransformer
@@ -229,6 +229,8 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
             true_X=X,
             true_E=E,
             log=i % self.log_every_steps == 0,
+            writer=self.logger.experiment if self.logger else None,
+            global_step=self.global_step,
         )
 
         return {"loss": loss}
@@ -260,13 +262,16 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
         """Log epoch-level cross-entropy losses, atom/bond accuracy, and GPU memory."""
         to_log = self.train_loss.log_epoch_metrics()
         self.print(
-            f"Epoch {self.current_epoch}: X_CE: {to_log['train_epoch/x_CE']:.3f}"
+            f"Epoch {self.current_epoch}: X_CE: {to_log['train_epoch/X_CE']:.3f}"
             f" -- E_CE: {to_log['train_epoch/E_CE']:.3f} --"
             f" y_CE: {to_log['train_epoch/y_CE']:.3f}"
             f" -- {time.time() - self.start_epoch_time:.1f}s "
         )
         epoch_at_metrics, epoch_bond_metrics = (
-            self.train_metrics.log_epoch_metrics()
+            self.train_metrics.log_epoch_metrics(
+                writer=self.logger.experiment if self.logger else None,
+                global_step=self.current_epoch,
+            )
         )
         self.print(
             f"Epoch {self.current_epoch}: {epoch_at_metrics} -- {epoch_bond_metrics}"
