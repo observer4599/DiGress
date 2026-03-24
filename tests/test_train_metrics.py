@@ -69,7 +69,7 @@ def test_train_loss_discrete_log_epoch_metrics_returns_expected_keys() -> None:
     loss(pred_X, pred_E, pred_y, true_X, true_E, true_y, log=False)
     metrics = loss.log_epoch_metrics()
     assert set(metrics.keys()) == {
-        "train_epoch/x_CE",
+        "train_epoch/X_CE",
         "train_epoch/E_CE",
         "train_epoch/y_CE",
     }

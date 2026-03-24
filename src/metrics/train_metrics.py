@@ -1,15 +1,5 @@
-"""Training loss module for the DiGress discrete diffusion model.
+"""Weighted cross-entropy training loss for the DiGress discrete diffusion model."""
 
-:class:`TrainLossDiscrete` implements a weighted cross-entropy loss where the
-model predicts the original clean graph (x_0-prediction) for node types, edge
-types, and global features.
-
-It accumulates per-batch statistics and exposes ``reset()`` and
-``log_epoch_metrics()`` to fit the PyTorch Lightning training-loop interface
-used in ``diffusion_model_discrete.py``.
-"""
-
-import torch
 import torch.nn as nn
 from torch import Tensor
 from src.metrics.abstract_metrics import CrossEntropyMetric
@@ -60,9 +50,10 @@ class TrainLossDiscrete(nn.Module):
     ) -> tuple[Tensor, dict[str, Tensor | float] | None]:
         """Compute the weighted cross-entropy loss for one training batch.
 
-        Flattens X and E to 2-D, removes all-zero (padding) rows, then
-        computes per-component cross-entropy.  Empty tensors are treated as
-        ``0.0`` and excluded from the sum.
+        X and E are flattened to 2-D and all-zero (padding) rows are removed
+        before computing their cross-entropy losses.  ``y`` is a per-graph
+        global feature with no padding, so it is passed directly.  A component
+        whose rows are all padding contributes ``0.0`` to the total loss.
 
         Args:
             masked_pred_X: Predicted node-type logits, shape ``(bs, n, d_X)``.
@@ -71,32 +62,25 @@ class TrainLossDiscrete(nn.Module):
             true_X: One-hot ground-truth node types, shape ``(bs, n, d_X)``.
             true_E: One-hot ground-truth edge types, shape ``(bs, n, n, d_E)``.
             true_y: One-hot ground-truth global features, shape ``(bs, d_y)``.
-            log: If ``True``, also returns a dict with ``train_loss/batch_CE``
-                and per-component CE values; otherwise returns ``None`` for
-                the dict.
+            log: If ``True``, ``to_log`` contains ``train_loss/batch_CE``,
+                ``train_loss/X_CE``, ``train_loss/E_CE``, and
+                ``train_loss/y_CE``; components with no valid rows are ``-1``.
 
         Returns:
-            A tuple ``(loss, to_log)`` where ``loss`` is the scalar
+            ``(loss, to_log)`` where ``loss`` is the scalar
             ``loss_X + λ_E * loss_E + λ_y * loss_y`` and ``to_log`` is a
             dict of batch metrics when ``log=True``, or ``None`` otherwise.
         """
-        true_X = torch.reshape(true_X, (-1, true_X.size(-1)))  # (bs * n, dx)
-        true_E = torch.reshape(true_E, (-1, true_E.size(-1)))  # (bs * n * n, de)
-        masked_pred_X = torch.reshape(masked_pred_X, (-1, masked_pred_X.size(-1)))  # (bs * n, dx)
-        masked_pred_E = torch.reshape(masked_pred_E, (-1, masked_pred_E.size(-1)))   # (bs * n * n, de)
+        true_X = true_X.flatten(0, -2)          # (bs * n, dx)
+        true_E = true_E.flatten(0, -2)          # (bs * n * n, de)
+        masked_pred_X = masked_pred_X.flatten(0, -2)
+        masked_pred_E = masked_pred_E.flatten(0, -2)
 
-        # Remove masked rows
         mask_X = (true_X != 0.).any(dim=-1)
         mask_E = (true_E != 0.).any(dim=-1)
 
-        flat_true_X = true_X[mask_X, :]
-        flat_pred_X = masked_pred_X[mask_X, :]
-
-        flat_true_E = true_E[mask_E, :]
-        flat_pred_E = masked_pred_E[mask_E, :]
-
-        loss_X = self.node_loss(flat_pred_X, flat_true_X) if true_X.numel() > 0 else 0.0
-        loss_E = self.edge_loss(flat_pred_E, flat_true_E) if true_E.numel() > 0 else 0.0
+        loss_X = self.node_loss(masked_pred_X[mask_X], true_X[mask_X]) if mask_X.any() else 0.0
+        loss_E = self.edge_loss(masked_pred_E[mask_E], true_E[mask_E]) if mask_E.any() else 0.0
         loss_y = self.y_loss(pred_y, true_y) if true_y.numel() > 0 else 0.0
 
         loss = loss_X + self.lambda_train[0] * loss_E + self.lambda_train[1] * loss_y
@@ -104,9 +88,9 @@ class TrainLossDiscrete(nn.Module):
         if log:
             to_log = {
                 "train_loss/batch_CE": (loss_X + loss_E + loss_y).detach(),
-                "train_loss/X_CE": self.node_loss.compute() if true_X.numel() > 0 else -1,
-                "train_loss/E_CE": self.edge_loss.compute() if true_E.numel() > 0 else -1,
-                "train_loss/y_CE": self.y_loss.compute() if true_y.numel() > 0 else -1,
+                "train_loss/X_CE": self.node_loss.compute() if mask_X.any() else -1.0,
+                "train_loss/E_CE": self.edge_loss.compute() if mask_E.any() else -1.0,
+                "train_loss/y_CE": self.y_loss.compute() if true_y.numel() > 0 else -1.0,
             }
         return loss, to_log
 
@@ -123,14 +107,11 @@ class TrainLossDiscrete(nn.Module):
         return ``-1`` as a sentinel value.
 
         Returns:
-            Dict with keys ``train_epoch/x_CE``, ``train_epoch/E_CE``, and
+            Dict with keys ``train_epoch/X_CE``, ``train_epoch/E_CE``, and
             ``train_epoch/y_CE``.
         """
-        epoch_node_loss = self.node_loss.compute() if self.node_loss.total_samples > 0 else -1
-        epoch_edge_loss = self.edge_loss.compute() if self.edge_loss.total_samples > 0 else -1
-        epoch_y_loss = self.y_loss.compute() if self.y_loss.total_samples > 0 else -1
-
-        to_log = {"train_epoch/x_CE": epoch_node_loss,
-                  "train_epoch/E_CE": epoch_edge_loss,
-                  "train_epoch/y_CE": epoch_y_loss}
-        return to_log
+        components = {"X": self.node_loss, "E": self.edge_loss, "y": self.y_loss}
+        return {
+            f"train_epoch/{k}_CE": m.compute() if m.total_samples > 0 else -1.0
+            for k, m in components.items()
+        }
