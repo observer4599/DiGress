@@ -331,7 +331,7 @@ class SamplingMolecularMetrics(nn.Module):
             logger.info("Custom metrics computed.")
             with open(f"graphs/{name}/valid_unique_molecules_e{current_epoch}_b{val_counter}.txt", "w") as f:
                 f.writelines(rdkit_metrics[1])
-            logger.info("Stability: %s | RDKit: %s", stability, rdkit_metrics[0])
+            logger.info("Stability: {} | RDKit: {}", stability, rdkit_metrics[0])
         return to_log
 
     def _build_to_log(
