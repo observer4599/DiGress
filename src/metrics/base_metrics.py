@@ -36,6 +36,8 @@ class TrainAbstractMetricsDiscrete:
         true_X: Tensor,
         true_E: Tensor,
         log: bool,
+        writer=None,
+        global_step: int = 0,
     ) -> None:
         pass
 
