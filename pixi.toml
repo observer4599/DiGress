@@ -8,14 +8,14 @@ platforms = ["osx-arm64", "linux-64"]
 [dependencies]
 python = "3.11.*"
 graph-tool = "==2.46"
-pytorch = "==2.5.1"
-torchvision = "==0.20.1"
+pytorch = { version = "==2.5.1", channel = "pytorch" }
+torchvision = { version = "==0.20.1", channel = "pytorch" }
 
 [pypi-dependencies]
 numpy = "==1.26.4"
 scipy = "==1.17.1"
 matplotlib = "==3.10.8"
-networkx = "==3.4"
+networkx = "==3.6.1"
 pandas = "==1.5.3"
 tqdm = "==4.67.3"
 setuptools = "==79.0.1"
