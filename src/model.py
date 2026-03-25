@@ -269,7 +269,7 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
                 global_step=self.current_epoch,
             )
         )
-        logger.info("Epoch {} accuracy -- atom: {} -- bond: {}", self.current_epoch, epoch_at_metrics, epoch_bond_metrics)
+        logger.info("Epoch {} cross-entropy -- atom: {} -- bond: {}", self.current_epoch, epoch_at_metrics, epoch_bond_metrics)
 
     def configure_optimizers(self) -> torch.optim.AdamW:
         """Create the AdamW optimizer with AMSGrad and weight decay from config."""
