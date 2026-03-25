@@ -44,7 +44,11 @@ class TrainAbstractMetricsDiscrete:
     def reset(self) -> None:
         pass
 
-    def log_epoch_metrics(self) -> tuple[None, None]:
+    def log_epoch_metrics(
+        self,
+        writer=None,
+        global_step: int = 0,
+    ) -> tuple[None, None]:
         return None, None
 
 
