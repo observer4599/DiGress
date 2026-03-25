@@ -10,6 +10,7 @@ python = "3.11.*"
 graph-tool = "==2.46"
 pytorch = { version = "==2.5.1", channel = "pytorch" }
 torchvision = { version = "==0.20.1", channel = "pytorch" }
+setuptools = ">=82.0.1,<83"
 
 [pypi-dependencies]
 numpy = "==1.26.4"
