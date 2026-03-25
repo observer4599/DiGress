@@ -114,7 +114,7 @@ class GeneratedNodesDistribution(_NormalizedDistributionMetric):
             )
             self.node_dist += torch.bincount(
                 atom_types.long(), minlength=len(self.node_dist)
-            ).float()
+            ).float().to(self.node_dist.device)
 
     def compute(self) -> Tensor:
         """Return the normalized atom-type distribution."""
@@ -147,6 +147,7 @@ class GeneratedEdgesDistribution(_NormalizedDistributionMetric):
             molecules: List of ``(atom_types, edge_types)`` tensors.
         """
         for _, edge_types in molecules:
+            edge_types = edge_types.to(self.edge_dist.device)
             mask = torch.triu(torch.ones_like(edge_types), diagonal=1).bool()
             edge_types = edge_types[mask]
             unique_edge_types, counts = torch.unique(
@@ -190,6 +191,7 @@ class ValencyDistribution(_NormalizedDistributionMetric):
             molecules: List of ``(atom_types, edge_types)`` tensors.
         """
         for _, edge_types in molecules:
+            edge_types = edge_types.to(self.edgepernode_dist.device)
             edge_types[edge_types == 4] = 1.5
             valencies = torch.sum(edge_types, dim=0)
             unique, counts = torch.unique(valencies, return_counts=True)
