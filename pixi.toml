@@ -10,7 +10,6 @@ python = "3.11.*"
 graph-tool = "==2.46"
 pytorch = { version = "==2.5.1", channel = "pytorch" }
 torchvision = { version = "==0.20.1", channel = "pytorch" }
-setuptools = "==81.0.0"
 
 [pypi-dependencies]
 numpy = "==1.26.4"
@@ -33,6 +32,8 @@ tensorboard = "==2.20.0"
 pytest = "==8.3.5"
 loguru = "==0.7.3"
 moviepy = "==1.0.3"
+setuptools = "==81.0.0"
+digress = { path = ".", editable = true }
 
 [environments]
 default = { solve-group = "default" }
