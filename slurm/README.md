@@ -28,6 +28,7 @@ Add the following:
 Host idun
     HostName idun-login1.hpc.ntnu.no
     User <your_username>
+    SetEnv TERM=xterm-256color
 ```
 
 After that, logging in is just:
